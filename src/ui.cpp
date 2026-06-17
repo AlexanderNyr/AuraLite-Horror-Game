@@ -402,7 +402,8 @@ void UIRenderer::drawText(const std::string& text, float x, float y, float scale
     float currentX = x;
     float charW = 8.0f * scale;
     float charH = 8.0f * scale;
-    bool textureMode = false;
+    uiShader.setInt("useTexture", 1);
+    bool textureMode = true;
 
     auto setTextureMode = [&](bool enabled) {
         if (textureMode != enabled) {

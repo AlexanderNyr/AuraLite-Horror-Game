@@ -75,6 +75,7 @@ void Game::init(int width, int height, bool mobileMode) {
         uniform vec3 fogColor;
         uniform float fogStart;
         uniform float fogEnd;
+        uniform float time;
 
         uniform vec3 ambientColor;
         uniform vec3 dirLightColor;
@@ -89,6 +90,31 @@ void Game::init(int width, int height, bool mobileMode) {
         uniform sampler2D texture_diffuse;
         uniform int useTexture;
 
+        float hash(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float valueNoise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            float a = hash(i);
+            float b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0));
+            float d = hash(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+
+        vec3 filmic(vec3 x) {
+            // Cheap ACES-like tonemap: gives darker, more photographic contrast.
+            const float a = 2.51;
+            const float b = 0.03;
+            const float c = 2.43;
+            const float d = 0.59;
+            const float e = 0.14;
+            return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+        }
+
         void main() {
             vec4 baseColor = (useTexture != 0) ? texture(texture_diffuse, TexCoord) * Color : Color;
             if (baseColor.a < 0.1) discard;
@@ -96,42 +122,67 @@ void Game::init(int width, int height, bool mobileMode) {
             vec3 norm = normalize(Normal);
             vec3 viewDir = normalize(viewPos - FragPos);
 
-            // Ambient
-            vec3 ambient = ambientColor * baseColor.rgb;
+            // Material response: rough, wet, low-key surfaces instead of flat colors.
+            vec3 albedo = pow(max(baseColor.rgb, vec3(0.0)), vec3(2.2));
+            float roughness = clamp(0.78 - baseColor.r * 0.18 + valueNoise(TexCoord * 7.0) * 0.12, 0.35, 0.95);
 
-            // Directional Light
+            // Ambient hemisphere: colder from above, muddy bounce from the ground.
+            float hemi = norm.y * 0.5 + 0.5;
+            vec3 skyAmbient = ambientColor * mix(vec3(0.55, 0.58, 0.65), vec3(1.0), hemi);
+            vec3 groundBounce = vec3(0.055, 0.045, 0.032) * (1.0 - hemi);
+            vec3 ambient = (skyAmbient + groundBounce) * albedo;
+
+            // Directional light with wrap term for softer overcast realism.
             vec3 lightDir = normalize(-dirLightDir);
-            float diff = max(dot(norm, lightDir), 0.0);
-            vec3 diffuse = diff * dirLightColor * baseColor.rgb;
+            float diff = max((dot(norm, lightDir) + 0.18) / 1.18, 0.0);
+            vec3 diffuse = diff * dirLightColor * albedo;
 
-            // Flashlight
+            // Subtle wet/specular response on leaves, stone and car surfaces.
+            vec3 halfDir = normalize(lightDir + viewDir);
+            float specPower = mix(12.0, 64.0, 1.0 - roughness);
+            float spec = pow(max(dot(norm, halfDir), 0.0), specPower) * (1.0 - roughness) * 0.32;
+            vec3 specular = spec * dirLightColor;
+
+            // Flashlight: warm hotspot + softer spill + visible cone illumination.
             vec3 spotlight = vec3(0.0);
             if (flashIntensity > 0.0) {
                 vec3 lightToFrag = normalize(FragPos - flashPos);
                 float theta = dot(lightToFrag, normalize(flashDir));
                 if (theta > flashCutoff) {
                     float distance = length(FragPos - flashPos);
-                    float attenuation = 1.0 / (1.0 + 0.03 * distance + 0.001 * distance * distance);
-                    
-                    // Soft cone edges
-                    float epsilon = 0.04;
-                    float intensity = clamp((theta - flashCutoff) / epsilon, 0.0, 1.0) * flashIntensity;
+                    float attenuation = 1.0 / (1.0 + 0.025 * distance + 0.0012 * distance * distance);
+                    float epsilon = 0.07;
+                    float cone = clamp((theta - flashCutoff) / epsilon, 0.0, 1.0);
+                    float hotspot = pow(cone, 2.2);
 
                     vec3 spotLightDir = normalize(flashPos - FragPos);
                     float spotDiff = max(dot(norm, spotLightDir), 0.0);
-                    vec3 spotLightColor = vec3(1.0, 0.96, 0.82);
+                    float spotSpec = pow(max(dot(norm, normalize(spotLightDir + viewDir)), 0.0), 48.0) * 0.22;
+                    vec3 spotLightColor = vec3(1.0, 0.88, 0.62);
 
-                    spotlight = spotDiff * spotLightColor * baseColor.rgb * attenuation * intensity;
+                    spotlight = (spotDiff * albedo + spotSpec) * spotLightColor * attenuation * (0.35 * cone + 0.95 * hotspot) * flashIntensity;
                 }
             }
 
-            vec3 finalColor = ambient + diffuse + spotlight;
+            vec3 finalColor = ambient + diffuse + specular + spotlight;
 
-            // Atmospheric Fog
+            // Atmospheric fog with height falloff and drifting density noise.
             float distance = length(viewPos - FragPos);
-            float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
-            
-            FragColor = vec4(mix(fogColor, finalColor, fogFactor), baseColor.a);
+            float baseFog = clamp((distance - fogStart) / max(0.001, (fogEnd - fogStart)), 0.0, 1.0);
+            float fogNoise = valueNoise(FragPos.xz * 0.035 + vec2(time * 0.018, -time * 0.012));
+            float heightFog = clamp(1.0 - (FragPos.y + 1.0) / 12.0, 0.0, 1.0);
+            float fogAmount = clamp(baseFog + (fogNoise - 0.5) * 0.16 + heightFog * baseFog * 0.28, 0.0, 1.0);
+            fogAmount = smoothstep(0.0, 1.0, fogAmount);
+
+            vec3 fogged = mix(finalColor, fogColor, fogAmount);
+            fogged = filmic(fogged * 1.35);
+            fogged = pow(fogged, vec3(1.0 / 2.2));
+
+            // Distance desaturation for a more photographic, cold horror look.
+            float luma = dot(fogged, vec3(0.299, 0.587, 0.114));
+            fogged = mix(fogged, vec3(luma), clamp(distance / fogEnd, 0.0, 1.0) * 0.22);
+
+            FragColor = vec4(fogged, baseColor.a);
         }
     )glsl";
 
@@ -307,6 +358,7 @@ void Game::init(int width, int height, bool mobileMode) {
     // Initial Spawning & Placement
     spawnEntities();
     setupDaySettings();
+    state = STATE_MENU;
     resetPlayer();
 }
 
@@ -525,6 +577,11 @@ void Game::handleEvent(void* sdlEvent) {
         if (event->key.keysym.sym == SDLK_F2 && event->key.repeat == 0) {
             languageCyclePressed = true;
         }
+        if (event->key.repeat == 0) {
+            if (event->key.keysym.sym == SDLK_1) languageSelectRequested = 0;
+            if (event->key.keysym.sym == SDLK_2) languageSelectRequested = 1;
+            if (event->key.keysym.sym == SDLK_3) languageSelectRequested = 2;
+        }
     }
     else if (event->type == SDL_KEYUP) {
         if (event->key.keysym.scancode < 512) {
@@ -629,15 +686,41 @@ void Game::update(float deltaTime) {
 
     stateTimer += deltaTime;
 
+    bool languageChanged = false;
+    if (languageSelectRequested == 0) { loc.loadLanguage("en"); languageChanged = true; }
+    if (languageSelectRequested == 1) { loc.loadLanguage("ru"); languageChanged = true; }
+    if (languageSelectRequested == 2) { loc.loadLanguage("es"); languageChanged = true; }
+    languageSelectRequested = -1;
+
     if (languageCyclePressed) {
         loc.cycleLanguage();
         languageCyclePressed = false;
-        if (state == STATE_INTRO) {
+        languageChanged = true;
+    }
+
+    if (state == STATE_MENU) {
+        // Refresh menu/diary text after language changes without leaving the menu.
+        if (languageChanged) {
+            GameState oldState = state;
             setupDaySettings();
+            state = oldState;
         }
+        if (actionPressed) {
+            actionPressed = false;
+            state = STATE_INTRO;
+            fadeAlpha = 1.0f;
+            stateTimer = 0.0f;
+        }
+        flashlightTogglePressed = false;
+        return;
     }
 
     if (state == STATE_INTRO) {
+        if (languageChanged) {
+            GameState oldState = state;
+            setupDaySettings();
+            state = oldState;
+        }
         // Fade in text overlay
         if (fadeAlpha > 0.0f) {
             fadeAlpha -= deltaTime * 0.5f;
@@ -1064,6 +1147,34 @@ void Game::render() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
+    if (state == STATE_MENU) {
+        float bg[4] = {0.005f, 0.006f, 0.008f, 1.0f};
+        ui.drawRect(0, 0, screenWidth, screenHeight, bg);
+
+        // Minimal atmospheric menu: dark bands and fog-like panels.
+        float band[4] = {0.08f, 0.08f, 0.10f, 0.22f};
+        for (int i = 0; i < 6; ++i) {
+            float y = std::fmod(stateTimer * (14.0f + i * 3.0f) + i * 97.0f, (float)screenHeight);
+            ui.drawRect(0.0f, y, (float)screenWidth, 18.0f + i * 3.0f, band);
+        }
+
+        float titleCol[4] = {0.86f, 0.88f, 0.92f, 1.0f};
+        float redCol[4] = {0.75f, 0.05f, 0.04f, 1.0f};
+        float textCol[4] = {0.72f, 0.74f, 0.78f, 1.0f};
+        float dimCol[4] = {0.50f, 0.52f, 0.56f, 1.0f};
+
+        ui.drawText(loc.tr("menu.title", "ANXIETY FOG"), screenWidth * 0.12f, screenHeight * 0.16f, 4.0f, titleCol);
+        ui.drawText(loc.tr("menu.subtitle", "A procedural horror loop"), screenWidth * 0.125f, screenHeight * 0.29f, 1.5f, redCol);
+
+        std::stringstream langLine;
+        langLine << loc.tr("menu.language", "Language") << ": " << loc.currentName();
+        ui.drawText(langLine.str(), screenWidth * 0.12f, screenHeight * 0.44f, 1.5f, textCol);
+        ui.drawText(loc.tr("menu.language_hint", "1 English  2 Русский  3 Espanol  /  F2 next"), screenWidth * 0.12f, screenHeight * 0.50f, 1.2f, dimCol);
+        ui.drawText(loc.tr("menu.start", "Press ENTER / ACTION to open the diary"), screenWidth * 0.12f, screenHeight * 0.64f, 1.5f, textCol);
+        ui.drawText(loc.tr("menu.controls", "WASD move | Mouse look | Shift sprint | E interact | F flashlight"), screenWidth * 0.12f, screenHeight * 0.72f, 1.1f, dimCol);
+        return;
+    }
+
     if (state == STATE_JUMPSCARE) {
         // Red flashes and black bars
         float flash = std::sin(stateTimer * 40.0f) * 0.5f + 0.5f;
@@ -1118,6 +1229,7 @@ void Game::render() {
     mainShader.setVec3("fogColor", fogColor);
     mainShader.setFloat("fogStart", fogStart);
     mainShader.setFloat("fogEnd", fogEnd);
+    mainShader.setFloat("time", stateTimer);
 
     mainShader.setVec3("ambientColor", ambientColor);
     mainShader.setVec3("dirLightColor", dirLightColor);

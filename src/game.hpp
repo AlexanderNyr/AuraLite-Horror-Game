@@ -8,6 +8,7 @@
 #include "localization.hpp"
 
 enum GameState {
+    STATE_MENU,
     STATE_INTRO,
     STATE_GAMEPLAY,
     STATE_SLEEP_FADE,
@@ -115,6 +116,7 @@ public:
     bool actionPressed = false;
     bool flashlightTogglePressed = false;
     bool languageCyclePressed = false;
+    int languageSelectRequested = -1;
 
     // Mobile inputs
     bool touchActive = false;

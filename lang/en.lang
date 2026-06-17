@@ -1,18 +1,25 @@
 # AuraLite Horror localization file
-# Format: key = value. Use \n for line breaks. Keep values ASCII unless the font supports more glyphs.
+# Format: key = value. Use \n for line breaks.
 
 language.code = en
 language.name = English
 
+menu.title = ANXIETY FOG
+menu.subtitle = A horror loop deep in the woods
+menu.language = Language
+menu.language_hint = 1 English  2 Русский  3 Espanol  /  F2 next
+menu.start = Press ENTER / ACTION to open the diary
+menu.controls = WASD move | Mouse look | Shift sprint | E interact | F flashlight
+
 intro.prompt = Press ACTION / ENTER to begin...
 
-jumpscare.title = THE FOG CLAIMED YOU
-jumpscare.subtitle = THEY ARE ALIVE INSIDE THE FOG
-jumpscare.retry = Press ACTION (or E) to retry Day 6.
+jumpscare.title = THE FOG TOOK YOU
+jumpscare.subtitle = SOMETHING IS ALIVE IN THE FOG
+jumpscare.retry = Press ACTION or E to retry Day 6.
 
-win.title = YOU SURVIVED
-win.description = You managed to start the old sedan and drive out of the valley.\nThe red eyes faded behind the rear view mirror.\nBut the fog inside your head remains...\n\nThank you for playing!
-win.restart = Press ACTION (or E) to restart the horror loop.
+win.title = YOU MADE IT OUT
+win.description = The old sedan finally started, and you drove out of the valley.\nThe red eyes faded in the rear-view mirror.\nBut the fog inside your head never really left...\n\nThank you for playing.
+win.restart = Press ACTION or E to start the loop again.
 
 hud.day = DAY
 hud.coords = COORDS
@@ -33,40 +40,40 @@ target.page = PAGE
 target.cross = CROSS
 target.car = CAR
 
-objective.sleep_prompt = Press E (or Tap ACTION) to sleep.
+objective.sleep_prompt = Press E or ACTION to sleep.
 
-day1.objective.initial = Objective: Explore the valley and enjoy the peaceful forest.\nWhen you get tired, enter the cabin (0,0) and use your Bed.
-day1.objective.sleep_prompt = Press E (or Tap ACTION) on Bed inside cabin to sleep.
-day1.objective.explore = Objective: Explore the valley.\nEnter the Cabin (0,0) to sleep when tired.
-day1.diary = DAY 1: REFUGE\n\nI finally made it to the old cabin deep in the wooded valley.\nAway from the chaos of the city, the silence here is therapeutic.\nThe sun is warm, and the air smells of fresh pine needles.\nThis was the right choice. I should rest early tonight...
+day1.objective.initial = Goal: look around the valley and get used to the forest.\nWhen you are tired, return to the cabin (0,0) and sleep.
+day1.objective.sleep_prompt = Press E or ACTION by the bed to sleep.
+day1.objective.explore = Goal: explore the valley.\nReturn to the cabin (0,0) when you are ready to rest.
+day1.diary = DAY 1: REFUGE\n\nI finally reached the old cabin deep in the valley.\nAfter the city, this silence almost feels like medicine.\nThe sun is warm, and the air smells of pine and wet soil.\nMaybe leaving really was the right choice. I should sleep early tonight.
 
-day2.objective.initial = Objective: Check the old stone well in the northern forest (X:-20, Z:-50).\nReturn to the cabin Bed once inspected.
-day2.objective.find_well = Objective: Check the old stone well (X:-20, Z:-50) in northern woods.
-day2.objective.well_inspected = Well inspected. Cold wind blows from below... RETURN TO CABIN BED.
-day2.objective.return = Objective: Well inspected. Run back to Cabin Bed to sleep.
-day2.diary = DAY 2: THE WHITE WALL\n\nA dense, chilly fog has rolled into the valley overnight.\nIt feels unusually dead. No birds are singing, and no wind blows.\nI walked out to look at the old stone well today.\nA chilling draft blew up from the deep stone dark.\nI hurried back. It feels safer inside.
+day2.objective.initial = Goal: check the old well in the northern woods (X:-20, Z:-50).\nAfter that, return to the cabin bed.
+day2.objective.find_well = Goal: find and inspect the old well (X:-20, Z:-50).
+day2.objective.well_inspected = The well is inspected. Freezing air rises from below... Go back.
+day2.objective.return = Goal: the well is inspected. Return to the cabin and sleep.
+day2.diary = DAY 2: THE WHITE WALL\n\nA thick, cold fog covered the valley overnight.\nIt is too quiet: no birds, no wind, not even branches moving.\nI walked to the old stone well.\nA winter-cold draft came up from the dark below.\nI did not stay long. The cabin feels safer.
 
-day3.objective.initial = Objective: Collect 3 logs around the cabin woodpiles for fireplace.
-day3.objective.gather_prefix = Objective: Gather logs for fireplace around cabin (
-day3.objective.gather_suffix = /3 gathered).
-day3.objective.done = Objective: Log gathering completed. Return to Bed to sleep.
-day3.diary = DAY 3: CONFINEMENT\n\nThe fog has become a suffocating, physical wall.\nI cannot see past the clearing of the cabin anymore.\nI feel an immense pressure in my head, like a static buzz.\nToday, while walking, I swear I heard the sound of snapping branches\nmimicking my own footsteps. I locked the heavy front door.
+day3.objective.initial = Goal: collect 3 logs from the woodpiles near the cabin.
+day3.objective.gather_prefix = Goal: collect fireplace logs near the cabin (
+day3.objective.gather_suffix = /3 collected).
+day3.objective.done = Goal: the logs are collected. Return to the cabin and sleep.
+day3.diary = DAY 3: LOCKED IN\n\nThe fog is no longer just weather. It feels solid, like a wall.\nI can barely see past the clearing.\nThere is pressure in my head, a low electric hum that will not stop.\nToday I heard branches snapping in the woods.\nThe sound matched my footsteps. I locked every bolt on the door.
 
-day4.objective.initial = Objective: Find the dropped diary page in the western woods (X:-35, Z:-40).\nUse F / LIGHT to manage flashlight battery. RUN BACK once collected!
-day4.objective.find_page = Objective: Retrieve the lost notebook page in Western Woods (X:-35, Z:-40).\nFlashlight drains battery: press F / LIGHT to toggle.
-day4.objective.page_collected = Page Collected! '...THEY ARE IN THE FOG...'. RUN BACK TO CABIN BED!
-day4.objective.return = Objective: RUN BACK! Enter the Cabin Bed and LOCK the door!
-day4.objective.lock_prompt = Press E (or Tap ACTION) to LOCK THE DOOR & sleep.
-day4.diary = DAY 4: RED EYES\n\nI am not alone in these woods.\nThey are hiding in the fog, standing behind the pines.\nWhen I point my flashlight, I see pairs of glowing red eyes...\nThey do not move. They just stand still in the dark. Staring.\nI found a note in the clearing. Someone else was here.\nI am so scared.
+day4.objective.initial = Goal: find the lost diary page in the western woods (X:-35, Z:-40).\nSave your flashlight battery. Once you find it, run back.
+day4.objective.find_page = Goal: find the diary page in the western woods (X:-35, Z:-40).\nThe flashlight drains battery. Press F or LIGHT to toggle it.
+day4.objective.page_collected = Page found: '...THEY ARE IN THE FOG...'. Run back to the cabin!
+day4.objective.return = Goal: get back! Reach the cabin and lock the door.
+day4.objective.lock_prompt = Press E or ACTION to lock the door and sleep.
+day4.diary = DAY 4: RED EYES\n\nI am not alone out here.\nThey stand in the fog, behind the trees, waiting.\nWhen I shine the flashlight, I see pairs of red eyes.\nThey do not come closer. They just stare.\nI found someone else's note in the clearing. So someone was here before me.\nAnd I do not think they got out.
 
-day5.objective.initial = Objective: Find the Holy Cross in the sacred grove (X:45, Z:-45)!\nYour flashlight battery is dying. Escape back to the Cabin!
-day5.objective.find_cross = Objective: Cabin is compromised! Find the Holy Cross in Eastern Grove (X:45, Z:-45).\nConserve flashlight battery. Panic slows you down.
-day5.objective.cross_collected = The Cross glows! Red eyes scream in pain! Escape back to Cabin!
-day5.objective.return = Objective: Cross acquired. It burns them back -- run to Cabin and bar the door!
-day5.objective.bar_prompt = Press E (or Tap ACTION) to bar the door.
-day5.diary = DAY 5: THE COLD SCREAM\n\nThey are scratching at the cabin walls. Whispering my name.\nThe fog is leaking through the wooden planks, smelling of blood.\nMy flashlight is dying. It keeps flickering.\nI found a note mentioning a wooden cross erected in the east.\nI must find it. There is no other way to hold them back...
+day5.objective.initial = Goal: find the holy cross in the grove (X:45, Z:-45).\nYour flashlight battery is almost dead. Find it, then get home.
+day5.objective.find_cross = Goal: the cabin is no longer safe. Find the cross (X:45, Z:-45).\nSave your flashlight. Panic slows you down.
+day5.objective.cross_collected = The cross flares with light. They are backing away! Run to the cabin!
+day5.objective.return = Goal: you have the cross. It holds them back — reach the cabin and bar the door.
+day5.objective.bar_prompt = Press E or ACTION to bar the door.
+day5.diary = DAY 5: THE COLD SCREAM\n\nLast night they scratched at the walls and whispered my name.\nFog leaks through the boards. It smells like damp wood and blood.\nThe flashlight is dying — the beam keeps stuttering out.\nThe note mentioned a wooden cross somewhere to the east.\nIf it is real, it might be my only chance.
 
-day6.objective.initial = Objective: ESCAPE! RUN TO YOUR CAR PARKED AT THE ROAD END (X:10, Z:75)!
-day6.objective.escape = Objective: NO LIGHTS! NO PATH! REACH THE PARKING ROAD (X:10, Z:75)!
-day6.objective.car_prompt = CAR REACHED! Press E (or Tap ACTION) to Start Engine and Escape!
-day6.diary = DAY 6: NO ESCAPE\n\nMy flashlight is dead. Complete darkness.\nI can hear heavy panting and grinding teeth right behind my neck.\nIt's actively tracking me. I can feel its cold breath.\nMy car is parked on the northern lane.\nI have to run. I have to make it. RUN. RUN. RUN.
+day6.objective.initial = Goal: run to your car at the end of the road (X:10, Z:75)!
+day6.objective.escape = Goal: the flashlight is dead. The path is almost gone. Reach the car (X:10, Z:75)!
+day6.objective.car_prompt = The car is here! Press E or ACTION to start the engine and escape!
+day6.diary = DAY 6: NO WAY OUT\n\nThe flashlight is dead for good. There is only darkness now.\nBehind me I hear breathing and teeth grinding.\nIt is following me, and it never loses the trail.\nMy car is parked by the northern road.\nIf I reach it, I might still have a chance. Run. Just run.

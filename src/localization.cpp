@@ -161,11 +161,24 @@ bool Localization::loadFile(const std::string& path, std::unordered_map<std::str
     }
 #endif
 
-    std::ifstream file(path);
-    if (!file.is_open()) return false;
+    // Desktop fallback: support running from project root, build/, build/Release,
+    // or a manually copied executable without breaking localization.
+    const std::vector<std::string> candidates = {
+        path,
+        "../" + path,
+        "../../" + path,
+        "../../../" + path
+    };
 
-    parseStream(file);
-    return true;
+    for (const std::string& candidate : candidates) {
+        std::ifstream file(candidate);
+        if (file.is_open()) {
+            parseStream(file);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 int Localization::findLanguageIndex(const std::string& code) const {

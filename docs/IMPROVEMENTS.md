@@ -106,6 +106,16 @@ The game now supports external `.lang` files through `src/localization.*`.
 
 See `docs/LOCALIZATION.md`.
 
+## Menu and graphics
+
+- Added `STATE_MENU` before the diary intro.
+- Menu supports visible language selection (`1/2/3`, `F2`) so localization is no longer hidden.
+- Language files are searched from `lang/`, `../lang`, `../../lang` and `../../../lang`, fixing common build-folder launch issues.
+- Main 3D shader now uses filmic tonemapping, gamma-aware color, animated height fog, roughness/specular response and warmer flashlight lighting.
+- Procedural wood/ground textures were reworked for a more natural horror look.
+
+See `docs/GRAPHICS_UPGRADE.md`.
+
 ## Remaining high-impact future work
 
 1. Fully integrate SDL2 Android AAR/source so Gradle builds an APK out of the box.

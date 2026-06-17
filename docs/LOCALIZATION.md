@@ -29,6 +29,8 @@ Supported escapes:
 
 ## Runtime controls
 
+- The main menu shows language selection.
+- `1`, `2`, `3` select English, Русский, Espanol from the menu.
 - `F2` cycles language in-game.
 - `AURALITE_LANG=ru` / `en` / `es` chooses startup language.
 - If `AURALITE_LANG` is not set, the game checks the OS `LANG` environment variable.

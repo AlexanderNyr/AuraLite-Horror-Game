@@ -142,28 +142,33 @@ void Texture::generateNoise(int width, int height, bool woodPattern) {
         for (int x = 0; x < width; ++x) {
             int idx = (y * width + x) * 4;
             if (woodPattern) {
-                // Wood grain pattern: fine stripes along x with some sine waves
-                float grain = sinf(y * 0.8f + sinf(x * 0.1f) * 0.5f) * 0.1f + 0.9f;
-                // Horizonal joints
-                if (y % 16 < 2) grain *= 0.4f;
-                // Add tiny random grain noise
-                grain += (rand() % 100) / 800.0f - 0.0625f;
+                // Layered procedural wood: long grain, dark plank seams and damp stains.
+                float fx = (float)x / (float)width;
+                float fy = (float)y / (float)height;
+                float longGrain = sinf((fy * 36.0f + sinf(fx * 18.0f) * 1.7f) * 3.14159f) * 0.5f + 0.5f;
+                float fineGrain = sinf((fy * 180.0f + fx * 11.0f) * 3.14159f) * 0.5f + 0.5f;
+                float knots = sinf((fx * 9.0f + sinf(fy * 16.0f)) * 3.14159f) * sinf((fy * 7.0f) * 3.14159f);
+                float seam = (y % 18 < 2) ? 0.45f : 1.0f;
+                float grain = (0.55f + longGrain * 0.28f + fineGrain * 0.10f + knots * 0.08f) * seam;
                 grain = fmaxf(0.0f, fminf(1.0f, grain));
 
-                pixels[idx]     = (uint8_t)(55.0f * grain); // R
-                pixels[idx + 1] = (uint8_t)(35.0f * grain); // G
-                pixels[idx + 2] = (uint8_t)(18.0f * grain); // B
-                pixels[idx + 3] = 255;                      // A
+                pixels[idx]     = (uint8_t)(72.0f * grain + 12.0f); // R
+                pixels[idx + 1] = (uint8_t)(48.0f * grain + 8.0f);  // G
+                pixels[idx + 2] = (uint8_t)(25.0f * grain + 5.0f);  // B
+                pixels[idx + 3] = 255;                              // A
             } else {
-                // Grass / Mud dark green organic moss pattern
-                float noise = (sinf(x * 0.15f) * cosf(y * 0.15f) + sinf(x * 0.05f) * sinf(y * 0.09f)) * 0.25f + 0.5f;
-                noise += (rand() % 100) / 1000.0f;
-                noise = fmaxf(0.0f, fminf(1.0f, noise));
+                // Moss / mud ground: several frequencies plus deterministic pebbles.
+                float fx = (float)x / (float)width;
+                float fy = (float)y / (float)height;
+                float broad = (sinf(fx * 18.0f) * cosf(fy * 15.0f)) * 0.5f + 0.5f;
+                float moss = (sinf((fx + fy) * 57.0f) * sinf(fy * 43.0f)) * 0.5f + 0.5f;
+                float pebble = ((x * 37 + y * 17) % 101 == 0) ? 0.35f : 0.0f;
+                float wet = fmaxf(0.0f, fminf(1.0f, 0.42f + broad * 0.22f + moss * 0.18f - pebble));
 
-                pixels[idx]     = (uint8_t)(25.0f * noise); // R
-                pixels[idx + 1] = (uint8_t)(38.0f * noise); // G
-                pixels[idx + 2] = (uint8_t)(15.0f * noise); // B
-                pixels[idx + 3] = 255;                      // A
+                pixels[idx]     = (uint8_t)(18.0f + 28.0f * wet + pebble * 80.0f); // R
+                pixels[idx + 1] = (uint8_t)(28.0f + 45.0f * wet + pebble * 70.0f); // G
+                pixels[idx + 2] = (uint8_t)(14.0f + 18.0f * wet + pebble * 55.0f); // B
+                pixels[idx + 3] = 255;                                             // A
             }
         }
     }
