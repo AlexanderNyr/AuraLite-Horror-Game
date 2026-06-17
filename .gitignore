@@ -1,0 +1,45 @@
+# Build outputs
+build/
+out/
+dist/
+target/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+*.obj
+*.o
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+_deps/
+
+# Gradle / Android
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+local.properties
+*.apk
+*.aab
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.user
+*.vcxproj*
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

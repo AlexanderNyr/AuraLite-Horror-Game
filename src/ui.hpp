@@ -17,7 +17,7 @@ public:
     void drawText(const std::string& text, float x, float y, float scale, const float color[4]);
     void drawVirtualJoysticks(float leftX, float leftY, float leftRadius, float activeX, float activeY,
                               float rightX, float rightY, float rightRadius, float activeCamX, float activeCamY,
-                              bool isAndroid);
+                              bool isAndroid, const std::string& actionLabel = "ACTION");
     void cleanup();
 
 private:

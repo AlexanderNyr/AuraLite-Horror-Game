@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <array>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -108,6 +109,100 @@ static const uint8_t font8x8_basic[96][8] = {
     {0x38, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // '~'
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}  // DEL
 };
+
+
+// Decode a UTF-8 codepoint. Invalid sequences become '?'.
+static uint32_t decodeUtf8Codepoint(const std::string& text, size_t& i) {
+    unsigned char c = (unsigned char)text[i++];
+    if (c < 0x80) return c;
+
+    auto nextByte = [&]() -> unsigned char {
+        if (i >= text.size()) return 0;
+        return (unsigned char)text[i++];
+    };
+
+    if ((c & 0xE0) == 0xC0) {
+        unsigned char c1 = nextByte();
+        if ((c1 & 0xC0) != 0x80) return '?';
+        return ((uint32_t)(c & 0x1F) << 6) | (uint32_t)(c1 & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0) {
+        unsigned char c1 = nextByte();
+        unsigned char c2 = nextByte();
+        if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80) return '?';
+        return ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(c1 & 0x3F) << 6) | (uint32_t)(c2 & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0) {
+        unsigned char c1 = nextByte();
+        unsigned char c2 = nextByte();
+        unsigned char c3 = nextByte();
+        if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) return '?';
+        return ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(c1 & 0x3F) << 12) | ((uint32_t)(c2 & 0x3F) << 6) | (uint32_t)(c3 & 0x3F);
+    }
+    return '?';
+}
+
+static uint32_t uppercaseCyrillic(uint32_t cp) {
+    // а-я -> А-Я
+    if (cp >= 0x0430 && cp <= 0x044F) return cp - 0x20;
+    // ё -> Ё
+    if (cp == 0x0451) return 0x0401;
+    return cp;
+}
+
+// Minimal 5x7 Cyrillic pixel font. Rows use the low 5 bits.
+static const std::array<uint8_t, 7>* cyrillicGlyph(uint32_t cp) {
+    cp = uppercaseCyrillic(cp);
+
+    static const std::array<uint8_t, 7> A  = {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11};
+    static const std::array<uint8_t, 7> BE = {0x1F,0x10,0x10,0x1E,0x11,0x11,0x1E};
+    static const std::array<uint8_t, 7> VE = {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E};
+    static const std::array<uint8_t, 7> GE = {0x1F,0x10,0x10,0x10,0x10,0x10,0x10};
+    static const std::array<uint8_t, 7> DE = {0x0E,0x12,0x12,0x12,0x12,0x1F,0x11};
+    static const std::array<uint8_t, 7> IE = {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F};
+    static const std::array<uint8_t, 7> IO = {0x0A,0x00,0x1F,0x10,0x1E,0x10,0x1F};
+    static const std::array<uint8_t, 7> ZHE= {0x15,0x15,0x0E,0x04,0x0E,0x15,0x15};
+    static const std::array<uint8_t, 7> ZE = {0x1E,0x01,0x01,0x0E,0x01,0x01,0x1E};
+    static const std::array<uint8_t, 7> I  = {0x11,0x13,0x15,0x15,0x19,0x11,0x11};
+    static const std::array<uint8_t, 7> J  = {0x0A,0x04,0x11,0x13,0x15,0x19,0x11};
+    static const std::array<uint8_t, 7> KA = {0x11,0x12,0x14,0x18,0x14,0x12,0x11};
+    static const std::array<uint8_t, 7> EL = {0x07,0x09,0x09,0x09,0x09,0x19,0x11};
+    static const std::array<uint8_t, 7> EM = {0x11,0x1B,0x15,0x15,0x11,0x11,0x11};
+    static const std::array<uint8_t, 7> EN = {0x11,0x11,0x11,0x1F,0x11,0x11,0x11};
+    static const std::array<uint8_t, 7> O  = {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E};
+    static const std::array<uint8_t, 7> PE = {0x1F,0x11,0x11,0x11,0x11,0x11,0x11};
+    static const std::array<uint8_t, 7> ER = {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10};
+    static const std::array<uint8_t, 7> ES = {0x0F,0x10,0x10,0x10,0x10,0x10,0x0F};
+    static const std::array<uint8_t, 7> TE = {0x1F,0x04,0x04,0x04,0x04,0x04,0x04};
+    static const std::array<uint8_t, 7> U  = {0x11,0x11,0x11,0x0F,0x01,0x01,0x1E};
+    static const std::array<uint8_t, 7> EF = {0x04,0x0E,0x15,0x15,0x0E,0x04,0x04};
+    static const std::array<uint8_t, 7> HA = {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11};
+    static const std::array<uint8_t, 7> CE = {0x11,0x11,0x11,0x11,0x11,0x1F,0x01};
+    static const std::array<uint8_t, 7> CHE= {0x11,0x11,0x11,0x0F,0x01,0x01,0x01};
+    static const std::array<uint8_t, 7> SHA= {0x15,0x15,0x15,0x15,0x15,0x15,0x1F};
+    static const std::array<uint8_t, 7> SCHA={0x15,0x15,0x15,0x15,0x15,0x1F,0x01};
+    static const std::array<uint8_t, 7> HARD={0x18,0x08,0x08,0x0E,0x09,0x09,0x0E};
+    static const std::array<uint8_t, 7> Y  = {0x11,0x11,0x19,0x15,0x15,0x15,0x19};
+    static const std::array<uint8_t, 7> SOFT={0x10,0x10,0x10,0x1E,0x11,0x11,0x1E};
+    static const std::array<uint8_t, 7> E  = {0x0E,0x11,0x01,0x07,0x01,0x11,0x0E};
+    static const std::array<uint8_t, 7> YU = {0x12,0x15,0x15,0x1D,0x15,0x15,0x12};
+    static const std::array<uint8_t, 7> YA = {0x0F,0x11,0x11,0x0F,0x05,0x09,0x11};
+
+    switch (cp) {
+        case 0x0410: return &A;    case 0x0411: return &BE;   case 0x0412: return &VE;
+        case 0x0413: return &GE;   case 0x0414: return &DE;   case 0x0415: return &IE;
+        case 0x0401: return &IO;   case 0x0416: return &ZHE;  case 0x0417: return &ZE;
+        case 0x0418: return &I;    case 0x0419: return &J;    case 0x041A: return &KA;
+        case 0x041B: return &EL;   case 0x041C: return &EM;   case 0x041D: return &EN;
+        case 0x041E: return &O;    case 0x041F: return &PE;   case 0x0420: return &ER;
+        case 0x0421: return &ES;   case 0x0422: return &TE;   case 0x0423: return &U;
+        case 0x0424: return &EF;   case 0x0425: return &HA;   case 0x0426: return &CE;
+        case 0x0427: return &CHE;  case 0x0428: return &SHA;  case 0x0429: return &SCHA;
+        case 0x042A: return &HARD; case 0x042B: return &Y;    case 0x042C: return &SOFT;
+        case 0x042D: return &E;    case 0x042E: return &YU;   case 0x042F: return &YA;
+        default: return nullptr;
+    }
+}
 
 void UIRenderer::init(int screenWidth, int screenHeight) {
     width = screenWidth;
@@ -295,7 +390,6 @@ void UIRenderer::drawText(const std::string& text, float x, float y, float scale
     GLint locColor = glGetUniformLocation(uiShader.id, "uiColor");
     glUniform4fv(locColor, 1, color);
 
-    uiShader.setInt("useTexture", 1);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fontTextureId);
 
@@ -308,39 +402,87 @@ void UIRenderer::drawText(const std::string& text, float x, float y, float scale
     float currentX = x;
     float charW = 8.0f * scale;
     float charH = 8.0f * scale;
+    bool textureMode = false;
 
-    for (char c : text) {
-        if (c == '\n') {
-            y += charH * 1.5f;
-            currentX = x;
-            continue;
+    auto setTextureMode = [&](bool enabled) {
+        if (textureMode != enabled) {
+            uiShader.setInt("useTexture", enabled ? 1 : 0);
+            textureMode = enabled;
+            if (enabled) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, fontTextureId);
+            }
         }
+    };
 
-        // Texture coordinates for character in 16x8 grid
-        int col = (unsigned char)c % 16;
-        int row = (unsigned char)c / 16;
+    auto drawQuad = [&](float qx, float qy, float qw, float qh, float u0, float v0, float u1, float v1) {
+        float data[24] = {
+            qx,      qy + qh, u0, v1,
+            qx + qw, qy + qh, u1, v1,
+            qx + qw, qy,      u1, v0,
 
+            qx,      qy + qh, u0, v1,
+            qx + qw, qy,      u1, v0,
+            qx,      qy,      u0, v0
+        };
+        glBindBuffer(GL_ARRAY_BUFFER, rectVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(data), data);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    };
+
+    auto drawAscii = [&](uint32_t cp) {
+        if (cp < 32 || cp > 127) cp = '?';
+        setTextureMode(true);
+
+        int col = (int)(cp % 16);
+        int row = (int)(cp / 16);
         float u_start = col / 16.0f;
         float u_end = (col + 1) / 16.0f;
         float v_start = row / 8.0f;
         float v_end = (row + 1) / 8.0f;
 
-        float data[24] = {
-            currentX,         y + charH, u_start, v_end,
-            currentX + charW, y + charH, u_end,   v_end,
-            currentX + charW, y,         u_end,   v_start,
+        drawQuad(currentX, y, charW, charH, u_start, v_start, u_end, v_end);
+    };
 
-            currentX,         y + charH, u_start, v_end,
-            currentX + charW, y,         u_end,   v_start,
-            currentX,         y,         u_start, v_start
-        };
+    auto drawCyrillic = [&](const std::array<uint8_t, 7>& glyph) {
+        setTextureMode(false);
+        const float pixel = scale;
+        const float offsetX = currentX + 1.5f * scale;
+        const float offsetY = y + 0.5f * scale;
 
-        glBindBuffer(GL_ARRAY_BUFFER, rectVbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(data), data);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if (glyph[row] & (1 << (4 - col))) {
+                    drawQuad(offsetX + col * pixel, offsetY + row * pixel,
+                             pixel, pixel, 0.0f, 0.0f, 1.0f, 1.0f);
+                }
+            }
+        }
+    };
 
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+    for (size_t i = 0; i < text.size();) {
+        uint32_t cp = decodeUtf8Codepoint(text, i);
+        if (cp == '\n') {
+            y += charH * 1.5f;
+            currentX = x;
+            continue;
+        }
 
-        // Advance character position
+        // Common Cyrillic punctuation in UTF-8 text.
+        if (cp == 0x2014 || cp == 0x2013) cp = '-';
+        if (cp == 0x2026) cp = '.';
+        if (cp == 0x00AB || cp == 0x00BB || cp == 0x201C || cp == 0x201D) cp = '"';
+        if (cp == 0x2018 || cp == 0x2019) cp = '\'';
+        if (cp == 0x00A0) cp = ' ';
+
+        if (cp < 128) {
+            drawAscii(cp);
+        } else if (const auto* glyph = cyrillicGlyph(cp)) {
+            drawCyrillic(*glyph);
+        } else {
+            drawAscii('?');
+        }
+
         currentX += charW;
     }
 
@@ -351,7 +493,7 @@ void UIRenderer::drawText(const std::string& text, float x, float y, float scale
 
 void UIRenderer::drawVirtualJoysticks(float leftX, float leftY, float leftRadius, float activeX, float activeY,
                                       float rightX, float rightY, float rightRadius, float activeCamX, float activeCamY,
-                                      bool isAndroid) {
+                                      bool isAndroid, const std::string& actionLabel) {
     if (!isAndroid) return;
 
     // Draw Left joystick (movement)
@@ -373,7 +515,7 @@ void UIRenderer::drawVirtualJoysticks(float leftX, float leftY, float leftRadius
     drawRect(width - 160.0f, height - 320.0f, 100.0f, 100.0f, actionColor);
     
     float actionTextColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    drawText("ACTION", width - 150.0f, height - 280.0f, 1.5f, actionTextColor);
+    drawText(actionLabel, width - 150.0f, height - 280.0f, 1.5f, actionTextColor);
 }
 
 void UIRenderer::cleanup() {

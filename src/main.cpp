@@ -15,6 +15,8 @@
 Game game;
 
 int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
 #ifndef __ANDROID__
     SDL_SetMainReady();
 #endif
@@ -118,9 +120,7 @@ int main(int argc, char* argv[]) {
                     width = event.window.data1;
                     height = event.window.data2;
                     glViewport(0, 0, width, height);
-                    game.ui.resize(width, height);
-                    game.screenWidth = width;
-                    game.screenHeight = height;
+                    game.resize(width, height);
                 }
             }
             else if (event.type == SDL_KEYDOWN) {

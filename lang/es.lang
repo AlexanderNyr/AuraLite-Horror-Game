@@ -1,0 +1,71 @@
+# Espanol sin acentos para el font ASCII actual.
+
+language.code = es
+language.name = Espanol
+
+intro.prompt = Pulsa ACTION / ENTER para empezar...
+
+jumpscare.title = LA NIEBLA TE RECLAMO
+jumpscare.subtitle = ELLOS VIVEN DENTRO DE LA NIEBLA
+jumpscare.retry = Pulsa ACTION (o E) para repetir el Dia 6.
+
+win.title = SOBREVIVISTE
+win.description = Lograste arrancar el viejo sedan y salir del valle.\nLos ojos rojos desaparecieron en el retrovisor.\nPero la niebla dentro de tu mente sigue ahi...\n\nGracias por jugar!
+win.restart = Pulsa ACTION (o E) para reiniciar el bucle.
+
+hud.day = DIA
+hud.coords = COORDS
+hud.target = OBJETIVO
+hud.lang = IDIOMA
+hud.stamina = ENERGIA
+hud.sprint = CORRER
+hud.panic = PANICO
+hud.light_on = LUZ ON
+hud.light_off = LUZ OFF
+hud.action_button = ACCION
+hud.light_button = LUZ
+
+target.cabin = CABANA
+target.well = POZO
+target.log = TRONCO
+target.page = PAGINA
+target.cross = CRUZ
+target.car = AUTO
+
+objective.sleep_prompt = Pulsa E (o ACTION) para dormir.
+
+day1.objective.initial = Objetivo: explora el valle y el bosque tranquilo.\nCuando te canses, entra en la cabana (0,0) y usa la cama.
+day1.objective.sleep_prompt = Pulsa E (o ACTION) en la cama de la cabana para dormir.
+day1.objective.explore = Objetivo: explora el valle.\nEntra en la Cabana (0,0) para dormir.
+day1.diary = DIA 1: REFUGIO\n\nPor fin llegue a la vieja cabana en el valle profundo.\nLejos del caos de la ciudad, este silencio casi cura.\nEl sol es calido y el aire huele a pino fresco.\nFue la decision correcta. Deberia descansar temprano...
+
+day2.objective.initial = Objetivo: revisa el viejo pozo de piedra en el bosque norte (X:-20, Z:-50).\nVuelve a la cama de la cabana al terminar.
+day2.objective.find_well = Objetivo: revisa el viejo pozo (X:-20, Z:-50) en el bosque norte.
+day2.objective.well_inspected = Pozo revisado. Un viento helado sube desde abajo... VUELVE A LA CABANA.
+day2.objective.return = Objetivo: pozo revisado. Corre a la cama de la cabana.
+day2.diary = DIA 2: LA PARED BLANCA\n\nUna niebla densa y fria cubrio el valle durante la noche.\nTodo se siente muerto. No hay aves ni viento.\nFui a mirar el viejo pozo de piedra.\nUna corriente fria salio de la oscuridad profunda.\nMe apresure a volver. Dentro parece mas seguro.
+
+day3.objective.initial = Objetivo: recoge 3 troncos cerca de la cabana.
+day3.objective.gather_prefix = Objetivo: recoge troncos para la chimenea (
+day3.objective.gather_suffix = /3 recogidos).
+day3.objective.done = Objetivo: troncos recogidos. Vuelve a la cama.
+day3.diary = DIA 3: ENCIERRO\n\nLa niebla se volvio una pared fisica y sofocante.\nNo puedo ver mas alla del claro de la cabana.\nSiento una presion enorme en la cabeza, como ruido estatico.\nHoy escuche ramas romperse imitando mis pasos.\nCerre con llave la pesada puerta principal.
+
+day4.objective.initial = Objetivo: encuentra la pagina del diario en el bosque oeste (X:-35, Z:-40).\nUsa F / LUZ para controlar la bateria. VUELVE CORRIENDO!
+day4.objective.find_page = Objetivo: recupera la pagina perdida en el Bosque Oeste (X:-35, Z:-40).\nLa linterna gasta bateria: pulsa F / LUZ.
+day4.objective.page_collected = Pagina encontrada! '...ESTAN EN LA NIEBLA...'. VUELVE A LA CABANA!
+day4.objective.return = Objetivo: VUELVE! Entra en la cabana y CIERRA la puerta!
+day4.objective.lock_prompt = Pulsa E (o ACTION) para CERRAR LA PUERTA y dormir.
+day4.diary = DIA 4: OJOS ROJOS\n\nNo estoy solo en estos bosques.\nSe esconden en la niebla, detras de los pinos.\nCuando apunto con la linterna veo pares de ojos rojos...\nNo se mueven. Solo miran desde la oscuridad.\nEncontre una nota en el claro. Alguien mas estuvo aqui.\nTengo mucho miedo.
+
+day5.objective.initial = Objetivo: encuentra la Santa Cruz en la arboleda (X:45, Z:-45)!\nLa bateria de la linterna muere. Vuelve a la Cabana!
+day5.objective.find_cross = Objetivo: la cabana esta comprometida! Encuentra la Santa Cruz (X:45, Z:-45).\nConserva bateria. El panico te ralentiza.
+day5.objective.cross_collected = La Cruz brilla! Los ojos rojos gritan de dolor! Vuelve a la Cabana!
+day5.objective.return = Objetivo: tienes la cruz. Los quema -- corre a la cabana y bloquea la puerta!
+day5.objective.bar_prompt = Pulsa E (o ACTION) para bloquear la puerta.
+day5.diary = DIA 5: EL GRITO FRIO\n\nRaspan las paredes de la cabana. Susurran mi nombre.\nLa niebla entra por las tablas y huele a sangre.\nMi linterna esta muriendo. No deja de parpadear.\nUna nota hablaba de una cruz de madera al este.\nDebo encontrarla. No hay otra forma de detenerlos...
+
+day6.objective.initial = Objetivo: ESCAPA! CORRE AL AUTO AL FINAL DEL CAMINO (X:10, Z:75)!
+day6.objective.escape = Objetivo: SIN LUZ! SIN CAMINO! LLEGA AL ESTACIONAMIENTO (X:10, Z:75)!
+day6.objective.car_prompt = AUTO ALCANZADO! Pulsa E (o ACTION) para arrancar y escapar!
+day6.diary = DIA 6: NO HAY ESCAPE\n\nMi linterna esta muerta. Oscuridad total.\nOigo jadeos y dientes moliendo justo detras de mi cuello.\nMe esta rastreando. Siento su aliento frio.\nMi auto esta en el camino del norte.\nTengo que correr. Tengo que lograrlo. CORRE. CORRE. CORRE.

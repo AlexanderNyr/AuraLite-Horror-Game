@@ -1,0 +1,72 @@
+# AuraLite Horror localization file
+# Format: key = value. Use \n for line breaks. Keep values ASCII unless the font supports more glyphs.
+
+language.code = en
+language.name = English
+
+intro.prompt = Press ACTION / ENTER to begin...
+
+jumpscare.title = THE FOG CLAIMED YOU
+jumpscare.subtitle = THEY ARE ALIVE INSIDE THE FOG
+jumpscare.retry = Press ACTION (or E) to retry Day 6.
+
+win.title = YOU SURVIVED
+win.description = You managed to start the old sedan and drive out of the valley.\nThe red eyes faded behind the rear view mirror.\nBut the fog inside your head remains...\n\nThank you for playing!
+win.restart = Press ACTION (or E) to restart the horror loop.
+
+hud.day = DAY
+hud.coords = COORDS
+hud.target = TARGET
+hud.lang = LANG
+hud.stamina = STAMINA
+hud.sprint = SPRINT
+hud.panic = PANIC
+hud.light_on = LIGHT ON
+hud.light_off = LIGHT OFF
+hud.action_button = ACTION
+hud.light_button = LIGHT
+
+target.cabin = CABIN
+target.well = WELL
+target.log = LOG
+target.page = PAGE
+target.cross = CROSS
+target.car = CAR
+
+objective.sleep_prompt = Press E (or Tap ACTION) to sleep.
+
+day1.objective.initial = Objective: Explore the valley and enjoy the peaceful forest.\nWhen you get tired, enter the cabin (0,0) and use your Bed.
+day1.objective.sleep_prompt = Press E (or Tap ACTION) on Bed inside cabin to sleep.
+day1.objective.explore = Objective: Explore the valley.\nEnter the Cabin (0,0) to sleep when tired.
+day1.diary = DAY 1: REFUGE\n\nI finally made it to the old cabin deep in the wooded valley.\nAway from the chaos of the city, the silence here is therapeutic.\nThe sun is warm, and the air smells of fresh pine needles.\nThis was the right choice. I should rest early tonight...
+
+day2.objective.initial = Objective: Check the old stone well in the northern forest (X:-20, Z:-50).\nReturn to the cabin Bed once inspected.
+day2.objective.find_well = Objective: Check the old stone well (X:-20, Z:-50) in northern woods.
+day2.objective.well_inspected = Well inspected. Cold wind blows from below... RETURN TO CABIN BED.
+day2.objective.return = Objective: Well inspected. Run back to Cabin Bed to sleep.
+day2.diary = DAY 2: THE WHITE WALL\n\nA dense, chilly fog has rolled into the valley overnight.\nIt feels unusually dead. No birds are singing, and no wind blows.\nI walked out to look at the old stone well today.\nA chilling draft blew up from the deep stone dark.\nI hurried back. It feels safer inside.
+
+day3.objective.initial = Objective: Collect 3 logs around the cabin woodpiles for fireplace.
+day3.objective.gather_prefix = Objective: Gather logs for fireplace around cabin (
+day3.objective.gather_suffix = /3 gathered).
+day3.objective.done = Objective: Log gathering completed. Return to Bed to sleep.
+day3.diary = DAY 3: CONFINEMENT\n\nThe fog has become a suffocating, physical wall.\nI cannot see past the clearing of the cabin anymore.\nI feel an immense pressure in my head, like a static buzz.\nToday, while walking, I swear I heard the sound of snapping branches\nmimicking my own footsteps. I locked the heavy front door.
+
+day4.objective.initial = Objective: Find the dropped diary page in the western woods (X:-35, Z:-40).\nUse F / LIGHT to manage flashlight battery. RUN BACK once collected!
+day4.objective.find_page = Objective: Retrieve the lost notebook page in Western Woods (X:-35, Z:-40).\nFlashlight drains battery: press F / LIGHT to toggle.
+day4.objective.page_collected = Page Collected! '...THEY ARE IN THE FOG...'. RUN BACK TO CABIN BED!
+day4.objective.return = Objective: RUN BACK! Enter the Cabin Bed and LOCK the door!
+day4.objective.lock_prompt = Press E (or Tap ACTION) to LOCK THE DOOR & sleep.
+day4.diary = DAY 4: RED EYES\n\nI am not alone in these woods.\nThey are hiding in the fog, standing behind the pines.\nWhen I point my flashlight, I see pairs of glowing red eyes...\nThey do not move. They just stand still in the dark. Staring.\nI found a note in the clearing. Someone else was here.\nI am so scared.
+
+day5.objective.initial = Objective: Find the Holy Cross in the sacred grove (X:45, Z:-45)!\nYour flashlight battery is dying. Escape back to the Cabin!
+day5.objective.find_cross = Objective: Cabin is compromised! Find the Holy Cross in Eastern Grove (X:45, Z:-45).\nConserve flashlight battery. Panic slows you down.
+day5.objective.cross_collected = The Cross glows! Red eyes scream in pain! Escape back to Cabin!
+day5.objective.return = Objective: Cross acquired. It burns them back -- run to Cabin and bar the door!
+day5.objective.bar_prompt = Press E (or Tap ACTION) to bar the door.
+day5.diary = DAY 5: THE COLD SCREAM\n\nThey are scratching at the cabin walls. Whispering my name.\nThe fog is leaking through the wooden planks, smelling of blood.\nMy flashlight is dying. It keeps flickering.\nI found a note mentioning a wooden cross erected in the east.\nI must find it. There is no other way to hold them back...
+
+day6.objective.initial = Objective: ESCAPE! RUN TO YOUR CAR PARKED AT THE ROAD END (X:10, Z:75)!
+day6.objective.escape = Objective: NO LIGHTS! NO PATH! REACH THE PARKING ROAD (X:10, Z:75)!
+day6.objective.car_prompt = CAR REACHED! Press E (or Tap ACTION) to Start Engine and Escape!
+day6.diary = DAY 6: NO ESCAPE\n\nMy flashlight is dead. Complete darkness.\nI can hear heavy panting and grinding teeth right behind my neck.\nIt's actively tracking me. I can feel its cold breath.\nMy car is parked on the northern lane.\nI have to run. I have to make it. RUN. RUN. RUN.

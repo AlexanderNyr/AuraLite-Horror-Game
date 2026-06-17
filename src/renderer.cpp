@@ -37,6 +37,7 @@ bool Shader::compile(const std::string& vertexSource, const std::string& fragmen
         char infoLog[512];
         glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
         LOGE("Vertex shader compile error: %s", infoLog);
+        glDeleteShader(vertexShader);
         return false;
     }
 
@@ -49,6 +50,8 @@ bool Shader::compile(const std::string& vertexSource, const std::string& fragmen
         char infoLog[512];
         glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
         LOGE("Fragment shader compile error: %s", infoLog);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
         return false;
     }
 
@@ -62,6 +65,10 @@ bool Shader::compile(const std::string& vertexSource, const std::string& fragmen
         char infoLog[512];
         glGetProgramInfoLog(id, 512, nullptr, infoLog);
         LOGE("Shader program linking error: %s", infoLog);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        glDeleteProgram(id);
+        id = 0;
         return false;
     }
 

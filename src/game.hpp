@@ -5,6 +5,7 @@
 #include "renderer.hpp"
 #include "camera.hpp"
 #include "ui.hpp"
+#include "localization.hpp"
 
 enum GameState {
     STATE_INTRO,
@@ -39,6 +40,7 @@ public:
     // Engine subsystems
     Camera camera;
     UIRenderer ui;
+    Localization loc;
 
     // Rendering pipeline shaders and assets
     Shader mainShader;
@@ -54,6 +56,16 @@ public:
     Mesh carMesh;
     Mesh billboardQuad; // simple quad for billboards
 
+    // Reusable objective item meshes (avoid rebuilding GPU buffers every frame)
+    Mesh logMesh;
+    Mesh pageMesh;
+    Mesh crossVerticalMesh;
+    Mesh crossHorizontalMesh;
+
+    // Precomputed forest instances (deterministic, no per-frame random regeneration)
+    std::vector<Vec3> treePositions;
+    std::vector<float> treeScales;
+
     // Environment and fog parameters
     Vec3 ambientColor;
     Vec3 dirLightColor;
@@ -66,12 +78,22 @@ public:
     bool flashlightOn = false;
     float flashlightIntensity = 0.0f;
     float flashlightFlickerTimer = 0.0f;
+    float flashlightBattery = 1.0f; // 0..1, Days 4-5 survival resource
+
+    // Psychological pressure: seeing entities, darkness and the chase raise fear.
+    // Fear affects stamina, heartbeat and screen effects.
+    float fear = 0.0f;
+    float scareFlashAlpha = 0.0f;
+    float chaserGraceTimer = 0.0f;
 
     // Objectives and Story details
     std::string objectiveText;
     std::string diaryText;
     float fadeAlpha = 1.0f;
     float stateTimer = 0.0f;
+
+    // Day 2 Well inspection
+    bool wellInspected = false;
 
     // Day 3 Wood Logs
     std::vector<Collectible> woodLogs;
@@ -91,6 +113,8 @@ public:
     // Player inputs
     bool keys[512] = {false};
     bool actionPressed = false;
+    bool flashlightTogglePressed = false;
+    bool languageCyclePressed = false;
 
     // Mobile inputs
     bool touchActive = false;
@@ -103,12 +127,14 @@ public:
     float lastTouchCamX = 0.0f;
     float lastTouchCamY = 0.0f;
 
-    // Audio cues
-    float heartbeatRate = 1.0f;
+    // Player stamina and visual/audio cues
+    float stamina = 1.0f;       // 0..1 normalized
+    float heartbeatRate = 1.0f; // seconds between visual heartbeat pulses
     float heartbeatTimer = 0.0f;
     bool isSprinting = false;
 
     void init(int width, int height, bool mobileMode);
+    void resize(int width, int height);
     void handleEvent(void* sdlEvent);
     void update(float deltaTime);
     void render();
@@ -116,6 +142,7 @@ public:
 
 private:
     void setupDaySettings();
+    void updateTouchLayout();
     void spawnEntities();
     void triggerNextDay();
     void resetPlayer();
