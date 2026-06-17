@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
 
     // Create SDL window
     SDL_Window* window = SDL_CreateWindow(
-        "Anxiety Fog: Horror Loop",
+        "Aura Valley - A Quiet Stay",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         width,

@@ -316,24 +316,68 @@ void generateWell(Mesh& mesh) {
 }
 
 void generateCar(Mesh& mesh) {
-    float metalColor[4] = {0.22f, 0.22f, 0.25f, 1.0f}; // spooky rusted navy grey
+    float metalColor[4] = {0.22f, 0.22f, 0.25f, 1.0f};
     float darkMetalColor[4] = {0.12f, 0.12f, 0.14f, 1.0f};
     float wheelColor[4] = {0.05f, 0.05f, 0.05f, 1.0f};
     float yellowLightColor[4] = {1.0f, 1.0f, 0.8f, 1.0f};
 
-    // Car Body Base
     generateBox(mesh, Vec3(5.0f, 1.2f, 10.0f), Vec3(0.0f, 1.2f, 0.0f), metalColor);
-
-    // Car Cabin
     generateBox(mesh, Vec3(4.5f, 1.4f, 5.0f), Vec3(0.0f, 2.5f, -1.5f), darkMetalColor);
-
-    // Front glowing Headlights
     generateBox(mesh, Vec3(0.8f, 0.4f, 0.1f), Vec3(-1.8f, 1.3f, 5.05f), yellowLightColor);
     generateBox(mesh, Vec3(0.8f, 0.4f, 0.1f), Vec3(1.8f, 1.3f, 5.05f), yellowLightColor);
-
-    // Wheels (4 cylinders/boxes)
     generateBox(mesh, Vec3(0.8f, 1.5f, 1.5f), Vec3(-2.4f, 0.75f, 3.0f), wheelColor);
     generateBox(mesh, Vec3(0.8f, 1.5f, 1.5f), Vec3(2.4f, 0.75f, 3.0f), wheelColor);
     generateBox(mesh, Vec3(0.8f, 1.5f, 1.5f), Vec3(-2.4f, 0.75f, -3.0f), wheelColor);
     generateBox(mesh, Vec3(0.8f, 1.5f, 1.5f), Vec3(2.4f, 0.75f, -3.0f), wheelColor);
+}
+
+// ==================== NEW VILLAGE & OPEN WORLD ====================
+
+void generateHouse(Mesh& mesh, bool hasChimney) {
+    float wood[4] = {0.42f, 0.32f, 0.22f, 1.0f};
+    float darkWood[4] = {0.28f, 0.22f, 0.15f, 1.0f};
+    float roof[4] = {0.35f, 0.18f, 0.12f, 1.0f};
+    float stone[4] = {0.48f, 0.46f, 0.42f, 1.0f};
+
+    // Main body
+    generateBox(mesh, Vec3(7.0f, 5.5f, 8.5f), Vec3(0, 2.8f, 0), wood, {2.5f, 2.0f});
+
+    // Roof
+    generateBox(mesh, Vec3(8.2f, 0.6f, 9.8f), Vec3(0, 6.0f, 0), roof, {3.0f, 2.5f});
+
+    // Door
+    generateBox(mesh, Vec3(1.4f, 3.2f, 0.3f), Vec3(0, 1.8f, 4.3f), darkWood);
+
+    // Windows
+    float win[4] = {0.65f, 0.75f, 0.85f, 1.0f};
+    generateBox(mesh, Vec3(1.6f, 1.8f, 0.25f), Vec3(-2.2f, 3.2f, 4.3f), win);
+    generateBox(mesh, Vec3(1.6f, 1.8f, 0.25f), Vec3(2.2f, 3.2f, 4.3f), win);
+
+    if (hasChimney) {
+        generateBox(mesh, Vec3(1.3f, 2.8f, 1.3f), Vec3(2.4f, 6.8f, -2.8f), stone);
+    }
+}
+
+void generateRock(Mesh& mesh, float scale) {
+    float rockCol[4] = {0.45f, 0.43f, 0.4f, 1.0f};
+    generateBox(mesh, Vec3(1.8f*scale, 1.4f*scale, 2.1f*scale), Vec3(0, 0.7f*scale, 0), rockCol);
+}
+
+void generateFence(Mesh& mesh, float length) {
+    float wood[4] = {0.35f, 0.28f, 0.18f, 1.0f};
+    float postH = 1.6f;
+    int posts = (int)(length / 1.8f) + 1;
+
+    for (int i = 0; i < posts; ++i) {
+        float x = -length/2 + i * (length / (posts-1));
+        generateBox(mesh, Vec3(0.18f, postH, 0.18f), Vec3(x, postH*0.5f, 0), wood);
+    }
+    // Horizontal planks
+    generateBox(mesh, Vec3(length, 0.22f, 0.12f), Vec3(0, postH*0.35f, 0), wood);
+    generateBox(mesh, Vec3(length, 0.22f, 0.12f), Vec3(0, postH*0.7f, 0), wood);
+}
+
+void generatePath(Mesh& mesh, float width, float length) {
+    float pathCol[4] = {0.58f, 0.52f, 0.45f, 1.0f};
+    generateBox(mesh, Vec3(width, 0.15f, length), Vec3(0, 0.08f, 0), pathCol);
 }

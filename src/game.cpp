@@ -4,7 +4,6 @@
 #include <iostream>
 #include <sstream>
 #include <cmath>
-#include <cstdlib>
 #include <algorithm>
 
 #ifndef M_PI
@@ -13,19 +12,15 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "HorrorGame", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "HorrorGame", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AuraLite", __VA_ARGS__)
 #else
 #define LOGI(...) printf(__VA_ARGS__); printf("\n")
-#define LOGE(...) fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n")
 #endif
 
-// Custom clamp helper
 static float clamp(float val, float minVal, float maxVal) {
     return val < minVal ? minVal : (val > maxVal ? maxVal : val);
 }
 
-// Simple LCG pseudo-random generator for identical forest layout
 static uint32_t lcg_seed = 987654321;
 static float randFloat() {
     lcg_seed = (lcg_seed * 1103515245 + 12345) & 0x7fffffff;
@@ -38,732 +33,379 @@ void Game::init(int width, int height, bool mobileMode) {
     isAndroid = mobileMode;
     loc.init("lang");
 
-    // Compile 3D shaders
+    // === Improved Shaders with better lighting ===
     std::string vert3D = R"glsl(
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec3 aNormal;
         layout(location = 2) in vec2 aTexCoord;
         layout(location = 3) in vec4 aColor;
 
-        out vec3 FragPos;
-        out vec3 Normal;
-        out vec2 TexCoord;
-        out vec4 Color;
-
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
-
+        out vec3 FragPos; out vec3 Normal; out vec2 TexCoord; out vec4 Color;
+        uniform mat4 model, view, projection;
         void main() {
             FragPos = vec3(model * vec4(aPos, 1.0));
             Normal = mat3(transpose(inverse(model))) * aNormal;
-            TexCoord = aTexCoord;
-            Color = aColor;
+            TexCoord = aTexCoord; Color = aColor;
             gl_Position = projection * view * model * vec4(aPos, 1.0);
         }
     )glsl";
 
     std::string frag3D = R"glsl(
-        in vec3 FragPos;
-        in vec3 Normal;
-        in vec2 TexCoord;
-        in vec4 Color;
-
+        in vec3 FragPos; in vec3 Normal; in vec2 TexCoord; in vec4 Color;
         out vec4 FragColor;
 
-        uniform vec3 viewPos;
-        uniform vec3 fogColor;
-        uniform float fogStart;
-        uniform float fogEnd;
-        uniform float time;
+        uniform vec3 viewPos, fogColor, ambientColor, dirLightColor, dirLightDir;
+        uniform float fogStart, fogEnd, time, fogDensity;
+        uniform vec3 flashPos, flashDir; uniform float flashIntensity;
+        uniform sampler2D texture_diffuse; uniform int useTexture;
 
-        uniform vec3 ambientColor;
-        uniform vec3 dirLightColor;
-        uniform vec3 dirLightDir;
-
-        // Flashlight (Spotlight)
-        uniform vec3 flashPos;
-        uniform vec3 flashDir;
-        uniform float flashCutoff;
-        uniform float flashIntensity;
-
-        uniform sampler2D texture_diffuse;
-        uniform int useTexture;
-
-        float hash(vec2 p) {
-            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-        }
-
-        float valueNoise(vec2 p) {
-            vec2 i = floor(p);
-            vec2 f = fract(p);
-            vec2 u = f * f * (3.0 - 2.0 * f);
-            float a = hash(i);
-            float b = hash(i + vec2(1.0, 0.0));
-            float c = hash(i + vec2(0.0, 1.0));
-            float d = hash(i + vec2(1.0, 1.0));
-            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-        }
-
-        vec3 filmic(vec3 x) {
-            // Cheap ACES-like tonemap: gives darker, more photographic contrast.
-            const float a = 2.51;
-            const float b = 0.03;
-            const float c = 2.43;
-            const float d = 0.59;
-            const float e = 0.14;
-            return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+        float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+        float valueNoise(vec2 p){
+            vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.-2.*f);
+            float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+            return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
         }
 
         void main() {
-            vec4 baseColor = (useTexture != 0) ? texture(texture_diffuse, TexCoord) * Color : Color;
-            if (baseColor.a < 0.1) discard;
+            vec4 base = (useTexture!=0)? texture(texture_diffuse,TexCoord)*Color : Color;
+            if(base.a<0.1) discard;
 
-            vec3 norm = normalize(Normal);
-            vec3 viewDir = normalize(viewPos - FragPos);
+            vec3 norm=normalize(Normal), viewDir=normalize(viewPos-FragPos);
+            vec3 albedo=pow(max(base.rgb,vec3(0.)),vec3(2.2));
 
-            // Material response: rough, wet, low-key surfaces instead of flat colors.
-            vec3 albedo = pow(max(baseColor.rgb, vec3(0.0)), vec3(2.2));
-            float roughness = clamp(0.78 - baseColor.r * 0.18 + valueNoise(TexCoord * 7.0) * 0.12, 0.35, 0.95);
+            float hemi=norm.y*0.5+0.5;
+            vec3 sky=ambientColor*mix(vec3(0.68,0.78,0.88),vec3(1.),hemi);
+            vec3 ground=vec3(0.065,0.06,0.045)*(1.-hemi);
+            vec3 ambient=(sky+ground)*albedo;
 
-            // Ambient hemisphere: colder from above, muddy bounce from the ground.
-            float hemi = norm.y * 0.5 + 0.5;
-            vec3 skyAmbient = ambientColor * mix(vec3(0.55, 0.58, 0.65), vec3(1.0), hemi);
-            vec3 groundBounce = vec3(0.055, 0.045, 0.032) * (1.0 - hemi);
-            vec3 ambient = (skyAmbient + groundBounce) * albedo;
+            vec3 ldir=normalize(-dirLightDir);
+            float diff=max(dot(norm,ldir)+0.08,0.);
+            vec3 diffuse=diff*dirLightColor*albedo;
 
-            // Directional light with wrap term for softer overcast realism.
-            vec3 lightDir = normalize(-dirLightDir);
-            float diff = max((dot(norm, lightDir) + 0.18) / 1.18, 0.0);
-            vec3 diffuse = diff * dirLightColor * albedo;
+            vec3 hdir=normalize(ldir+viewDir);
+            float spec=pow(max(dot(norm,hdir),0.),32.)*0.14;
+            vec3 specular=spec*dirLightColor;
 
-            // Subtle wet/specular response on leaves, stone and car surfaces.
-            vec3 halfDir = normalize(lightDir + viewDir);
-            float specPower = mix(12.0, 64.0, 1.0 - roughness);
-            float spec = pow(max(dot(norm, halfDir), 0.0), specPower) * (1.0 - roughness) * 0.32;
-            vec3 specular = spec * dirLightColor;
-
-            // Flashlight: warm hotspot + softer spill + visible cone illumination.
-            vec3 spotlight = vec3(0.0);
-            if (flashIntensity > 0.0) {
-                vec3 lightToFrag = normalize(FragPos - flashPos);
-                float theta = dot(lightToFrag, normalize(flashDir));
-                if (theta > flashCutoff) {
-                    float distance = length(FragPos - flashPos);
-                    float attenuation = 1.0 / (1.0 + 0.025 * distance + 0.0012 * distance * distance);
-                    float epsilon = 0.07;
-                    float cone = clamp((theta - flashCutoff) / epsilon, 0.0, 1.0);
-                    float hotspot = pow(cone, 2.2);
-
-                    vec3 spotLightDir = normalize(flashPos - FragPos);
-                    float spotDiff = max(dot(norm, spotLightDir), 0.0);
-                    float spotSpec = pow(max(dot(norm, normalize(spotLightDir + viewDir)), 0.0), 48.0) * 0.22;
-                    vec3 spotLightColor = vec3(1.0, 0.88, 0.62);
-
-                    spotlight = (spotDiff * albedo + spotSpec) * spotLightColor * attenuation * (0.35 * cone + 0.95 * hotspot) * flashIntensity;
+            vec3 spotlight=vec3(0.);
+            if(flashIntensity>0.){
+                vec3 toFrag=normalize(FragPos-flashPos);
+                if(dot(toFrag,normalize(flashDir))>0.6){
+                    float dist=length(FragPos-flashPos);
+                    float att=1./(1.+0.015*dist);
+                    spotlight=vec3(1.,0.95,0.85)*att*flashIntensity*0.6;
                 }
             }
 
-            vec3 finalColor = ambient + diffuse + specular + spotlight;
+            vec3 finalCol=ambient+diffuse+specular+spotlight;
 
-            // Atmospheric fog with height falloff and drifting density noise.
-            float distance = length(viewPos - FragPos);
-            float baseFog = clamp((distance - fogStart) / max(0.001, (fogEnd - fogStart)), 0.0, 1.0);
-            float fogNoise = valueNoise(FragPos.xz * 0.035 + vec2(time * 0.018, -time * 0.012));
-            float heightFog = clamp(1.0 - (FragPos.y + 1.0) / 12.0, 0.0, 1.0);
-            float fogAmount = clamp(baseFog + (fogNoise - 0.5) * 0.16 + heightFog * baseFog * 0.28, 0.0, 1.0);
-            fogAmount = smoothstep(0.0, 1.0, fogAmount);
+            float dist=length(viewPos-FragPos);
+            float baseFog=clamp((dist-fogStart)/max(0.001,(fogEnd-fogStart)),0.,1.);
+            float noise=valueNoise(FragPos.xz*0.016+vec2(time*0.01))*0.15;
+            float fogAmount=clamp(baseFog*fogDensity + noise*fogDensity*0.35,0.,1.);
 
-            vec3 fogged = mix(finalColor, fogColor, fogAmount);
-            fogged = filmic(fogged * 1.35);
-            fogged = pow(fogged, vec3(1.0 / 2.2));
-
-            // Distance desaturation for a more photographic, cold horror look.
-            float luma = dot(fogged, vec3(0.299, 0.587, 0.114));
-            fogged = mix(fogged, vec3(luma), clamp(distance / fogEnd, 0.0, 1.0) * 0.22);
-
-            FragColor = vec4(fogged, baseColor.a);
+            vec3 fogged=mix(finalCol,fogColor,fogAmount*0.8);
+            fogged=pow(fogged,vec3(1./2.2));
+            FragColor=vec4(fogged,base.a);
         }
     )glsl";
 
     mainShader.compile(vert3D, frag3D);
 
-    // Billboard Shaders
-    std::string vertBillboard = R"glsl(
-        layout(location = 0) in vec3 aPos;
-        layout(location = 2) in vec2 aTexCoord;
-
-        out vec2 TexCoord;
-
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
-
-        void main() {
-            TexCoord = aTexCoord;
-            gl_Position = projection * view * model * vec4(aPos, 1.0);
-        }
+    std::string vertBill = R"glsl(
+        layout(location=0)in vec3 aPos; layout(location=2)in vec2 aTexCoord;
+        out vec2 TexCoord; uniform mat4 model,view,projection;
+        void main(){TexCoord=aTexCoord; gl_Position=projection*view*model*vec4(aPos,1.);}
     )glsl";
 
-    // Procedural Billboard shader for silhouettes and glowing eyes
-    std::string fragBillboard = R"glsl(
-        in vec2 TexCoord;
-        out vec4 FragColor;
-
-        uniform vec3 viewPos;
-        uniform vec3 fogColor;
-        uniform float fogStart;
-        uniform float fogEnd;
-        uniform vec3 itemPos;
-
-        uniform int isSilhouette;
-        uniform float opacity;
-
-        float distToCapsule(vec2 p, vec2 a, vec2 b, float r) {
-            vec2 pa = p - a, ba = b - a;
-            float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-            return length(pa - ba * h) - r;
-        }
-
-        void main() {
-            vec2 uv = TexCoord;
-            vec4 pixelColor = vec4(0.0);
-
-            if (isSilhouette != 0) {
-                // Procedural Slender-like dark humanoid silhouette
-                float dHead = length(uv - vec2(0.5, 0.82)) - 0.07;
-                float dTorso = distToCapsule(uv, vec2(0.5, 0.72), vec2(0.5, 0.35), 0.11);
-                float dArmL = distToCapsule(uv, vec2(0.39, 0.70), vec2(0.32, 0.32), 0.035);
-                float dArmR = distToCapsule(uv, vec2(0.61, 0.70), vec2(0.68, 0.32), 0.035);
-                float dLegL = distToCapsule(uv, vec2(0.44, 0.35), vec2(0.41, 0.05), 0.045);
-                float dLegR = distToCapsule(uv, vec2(0.56, 0.35), vec2(0.59, 0.05), 0.045);
-
-                float dBody = min(dHead, min(dTorso, min(dArmL, min(dArmR, min(dLegL, dLegR)))));
-
-                if (dBody < 0.0) {
-                    pixelColor = vec4(0.02, 0.02, 0.02, opacity);
-
-                    // Add red glowing eyes on head
-                    float dEyeL = length(uv - vec2(0.47, 0.83));
-                    float dEyeR = length(uv - vec2(0.53, 0.83));
-                    if (dEyeL < 0.012 || dEyeR < 0.012) {
-                        pixelColor = vec4(1.0, 0.0, 0.0, opacity);
-                    }
-                } else if (dBody < 0.015) {
-                    float alpha = (1.0 - (dBody / 0.015)) * opacity;
-                    pixelColor = vec4(0.02, 0.02, 0.02, alpha);
-                } else {
-                    // Soft glowing ambient eyes bleeding out of dark silhouette
-                    float dEyeL = length(uv - vec2(0.47, 0.83));
-                    float dEyeR = length(uv - vec2(0.53, 0.83));
-                    float glow = exp(-min(dEyeL, dEyeR) * 20.0);
-                    if (glow > 0.05) {
-                        pixelColor = vec4(1.0, 0.0, 0.0, glow * 0.7 * opacity);
-                    } else {
-                        discard;
-                    }
-                }
-            } else {
-                // Just glowing red eyes in the dark!
-                float dEyeL = length(uv - vec2(0.42, 0.5));
-                float dEyeR = length(uv - vec2(0.58, 0.5));
-                float glowL = exp(-dEyeL * 30.0);
-                float glowR = exp(-dEyeR * 30.0);
-                float totalGlow = (glowL + glowR) * opacity;
-
-                if (totalGlow < 0.06) discard;
-                pixelColor = vec4(1.0, 0.0, 0.0, totalGlow);
-            }
-
-            // Apply Atmospheric Fog
-            float distance = length(viewPos - itemPos);
-            float fogFactor = clamp((fogEnd - distance) / (fogEnd - fogStart), 0.0, 1.0);
-
-            FragColor = vec4(mix(fogColor, pixelColor.rgb, fogFactor), pixelColor.a);
+    std::string fragBill = R"glsl(
+        in vec2 TexCoord; out vec4 FragColor;
+        uniform vec3 fogColor; uniform float fogStart,fogEnd,fogDensity;
+        uniform vec3 itemPos; uniform int itemType; uniform float opacity;
+        void main(){
+            vec2 uv=TexCoord; vec4 col=vec4(0.);
+            if(itemType==0){float d=length(uv-vec2(0.5));
+                if(d<0.4) col=vec4(0.9,0.52,0.7,1.);
+                if(length(uv-vec2(0.5))<0.12) col=vec4(1.,0.9,0.3,1.);
+            }else if(itemType==1) col=vec4(0.55,0.5,0.4,1.);
+            else if(itemType==2) col=vec4(0.45,0.6,0.4,1.);
+            float dist=length(itemPos); 
+            float f=clamp((fogEnd-dist)/(fogEnd-fogStart),0.2,1.);
+            FragColor=vec4(mix(fogColor,col.rgb,f*fogDensity),col.a*opacity);
         }
     )glsl";
+    billboardShader.compile(vertBill, fragBill);
 
-    billboardShader.compile(vertBillboard, fragBillboard);
+    grassTexture.generateNoise(128,128,false);
+    woodTexture.generateNoise(128,128,true);
 
-    // Create textures
-    grassTexture.generateNoise(128, 128, false);
-    woodTexture.generateNoise(128, 128, true);
-
-    // Generate meshes
-    generateTerrain(terrainMesh, 300.0f, 300.0f, 100, 100);
+    // === Larger open world terrain ===
+    generateTerrain(terrainMesh, 520.0f, 520.0f, 180, 180);
     terrainMesh.upload();
 
-    generateCabin(cabinMesh);
-    cabinMesh.upload();
+    generateCabin(cabinMesh); cabinMesh.upload();
+    generateTree(treeMesh); treeMesh.upload();
 
-    generateTree(treeMesh);
-    treeMesh.upload();
-
-    // Precompute deterministic forest instances once. Rendering previously regenerated
-    // the same pseudo-random positions every frame, which wasted CPU and hid gameplay bugs.
-    treePositions.clear();
-    treeScales.clear();
+    // Precompute forest
     lcg_seed = 12345;
-    for (int i = 0; i < 300; ++i) {
-        float tx = randFloat() * 190.0f - 95.0f;
-        float tz = randFloat() * 190.0f - 95.0f;
-
-        float dCabin = std::sqrt(tx * tx + tz * tz);
-        float dWell = std::sqrt((tx + 20.0f) * (tx + 20.0f) + (tz + 50.0f) * (tz + 50.0f));
-        float dCar = std::sqrt((tx - 10.0f) * (tx - 10.0f) + (tz - 75.0f) * (tz - 75.0f));
-        if (dCabin < 12.0f || dWell < 8.0f || dCar < 8.0f) {
-            continue;
-        }
-
-        treePositions.push_back(Vec3(tx, getTerrainHeight(tx, tz), tz));
-        treeScales.push_back(0.8f + randFloat() * 0.5f);
+    treePositions.clear(); treeScales.clear();
+    for(int i = 0; i < 420; ++i) {
+        float x = randFloat()*260 - 130;
+        float z = randFloat()*260 - 130;
+        if (sqrt(x*x + z*z) < 18) continue;
+        treePositions.push_back({x, getTerrainHeight(x,z), z});
+        treeScales.push_back(0.65f + randFloat()*0.7f);
     }
 
-    generateWell(wellMesh);
-    wellMesh.upload();
+    generateWell(wellMesh); wellMesh.upload();
+    generateCar(carMesh); carMesh.upload();
 
-    generateCar(carMesh);
-    carMesh.upload();
+    // === Generate Village ===
+    generateHouse(houseMesh);
+    houseMesh.upload();
+    generateRock(rockMesh);
+    rockMesh.upload();
+    generateFence(fenceMesh, 12.0f);
+    fenceMesh.upload();
+    generatePath(pathMesh, 3.5f, 18.0f);
+    pathMesh.upload();
 
-    // Create simple quad for Billboard sprites
+    generateVillage();
+
+    // Billboard quad
     billboardQuad.vertices = {
-        { Vec3(-1.0f, -1.0f, 0.0f), Vec3(0,0,1), Vec2(0.0f, 0.0f), {1,1,1,1} },
-        { Vec3( 1.0f, -1.0f, 0.0f), Vec3(0,0,1), Vec2(1.0f, 0.0f), {1,1,1,1} },
-        { Vec3( 1.0f,  1.0f, 0.0f), Vec3(0,0,1), Vec2(1.0f, 1.0f), {1,1,1,1} },
-        { Vec3(-1.0f,  1.0f, 0.0f), Vec3(0,0,1), Vec2(0.0f, 1.0f), {1,1,1,1} }
+        {Vec3(-1,-1,0),Vec3(0,0,1),Vec2(0,0),{1,1,1,1}},
+        {Vec3(1,-1,0),Vec3(0,0,1),Vec2(1,0),{1,1,1,1}},
+        {Vec3(1,1,0),Vec3(0,0,1),Vec2(1,1),{1,1,1,1}},
+        {Vec3(-1,1,0),Vec3(0,0,1),Vec2(0,1),{1,1,1,1}}
     };
-    billboardQuad.indices = {0, 1, 2, 0, 2, 3};
+    billboardQuad.indices={0,1,2,0,2,3};
     billboardQuad.upload();
 
-    // Reusable collectible meshes. These used to be generated every frame; keeping
-    // them immutable prevents a silent CPU/GPU memory leak and keeps billboards intact.
-    float logColor[4] = {0.8f, 0.7f, 0.3f, 1.0f};
-    generateBox(logMesh, Vec3(0.3f, 0.3f, 2.0f), Vec3(0, 0, 0), logColor);
-    logMesh.upload();
+    float logC[4]={0.7,0.55,0.3,1}; generateBox(logMesh,{0.3,0.3,2.0},{0,0,0},logC); logMesh.upload();
+    float flC[4]={0.85,0.45,0.65,1}; generateBox(flowerMesh,{0.5,0.7,0.5},{0,0,0},flC); flowerMesh.upload();
+    float stC[4]={0.5,0.48,0.45,1}; generateBox(stoneMesh,{0.6,0.42,0.6},{0,0,0},stC); stoneMesh.upload();
+    float tlC[4]={0.6,0.55,0.45,1}; generateBox(toolMesh,{0.32,1.6,0.32},{0,0,0},tlC); toolMesh.upload();
 
-    float pageColor[4] = {0.95f, 0.95f, 0.95f, 1.0f};
-    generateBox(pageMesh, Vec3(1.0f, 1.0f, 1.0f), Vec3(0, 0, 0), pageColor);
-    pageMesh.upload();
-
-    float crossColor[4] = {0.95f, 0.82f, 0.22f, 1.0f};
-    generateBox(crossVerticalMesh, Vec3(0.3f, 3.2f, 0.3f), Vec3(0, 0, 0), crossColor);
-    crossVerticalMesh.upload();
-    generateBox(crossHorizontalMesh, Vec3(2.0f, 0.3f, 0.3f), Vec3(0, 0.6f, 0), crossColor);
-    crossHorizontalMesh.upload();
-
-    // Initialize UI Renderer
     ui.init(screenWidth, screenHeight);
     updateTouchLayout();
-
-    // Initial Spawning & Placement
-    spawnEntities();
+    spawnCollectibles();
     setupDaySettings();
     state = STATE_MENU;
     resetPlayer();
 }
 
-void Game::resize(int width, int height) {
-    screenWidth = std::max(1, width);
-    screenHeight = std::max(1, height);
+void Game::resize(int w, int h) {
+    screenWidth = std::max(1,w);
+    screenHeight = std::max(1,h);
     ui.resize(screenWidth, screenHeight);
     updateTouchLayout();
 }
 
 void Game::updateTouchLayout() {
-    // Scale touch controls with the actual device/window size instead of hardcoding 1280x720.
-    leftRadius = std::max(58.0f, screenHeight * 0.105f);
-    rightRadius = std::max(82.0f, screenHeight * 0.16f);
-
-    leftJoyX = screenWidth * 0.13f;
-    leftJoyY = screenHeight * 0.78f;
-    rightJoyX = screenWidth * 0.86f;
-    rightJoyY = screenHeight * 0.78f;
-
-    if (walkTouchId == -1) {
-        activeJoyX = leftJoyX;
-        activeJoyY = leftJoyY;
-    }
-    if (lookTouchId == -1) {
-        activeCamX = rightJoyX;
-        activeCamY = rightJoyY;
-    }
+    leftRadius = std::max(55.f, screenHeight*0.1f);
+    rightRadius = std::max(78.f, screenHeight*0.155f);
+    leftJoyX = screenWidth*0.12f; leftJoyY = screenHeight*0.78f;
+    rightJoyX = screenWidth*0.87f; rightJoyY = screenHeight*0.78f;
+    if(walkTouchId==-1) activeJoyX=leftJoyX, activeJoyY=leftJoyY;
+    if(lookTouchId==-1) activeCamX=rightJoyX, activeCamY=rightJoyY;
 }
 
 void Game::resetPlayer() {
-    camera.position = Vec3(0.0f, 2.0f, 15.0f); // Spawn right in front of the cabin door
-    camera.yaw = -M_PI / 2.0f; // Look facing the door
+    camera.position = {2.0f, 2.2f, 22.0f};
+    camera.yaw = -M_PI/2.3f;
     camera.pitch = 0.0f;
     camera.updateCameraVectors();
-
-    stamina = 1.0f;
-    isSprinting = false;
-    flashlightTogglePressed = false;
-
-    logsCollected = 0;
-    for (auto& log : woodLogs) log.collected = false;
-    diaryPage.collected = false;
-    woodenCross.collected = false;
+    stamina = 1.0f; isSprinting = false;
 }
 
-void Game::spawnEntities() {
-    lcg_seed = 987654321; // fixed layout seed!
+void Game::generateVillage() {
+    villageObjects.clear();
 
-    // Reset vectors
-    redEyes.clear();
-    silhouettes.clear();
-    woodLogs.clear();
+    // Main village houses
+    villageObjects.push_back({{-48, getTerrainHeight(-48,-62), -62}, 0, 1.0f});
+    villageObjects.push_back({{52, getTerrainHeight(52,-58), -58}, 0, 0.95f});
+    villageObjects.push_back({{-35, getTerrainHeight(-35,45), 45}, 0, 0.85f});
 
-    // Spawn 15 pairs of Red Eyes scattered in the forest
-    for (int i = 0; i < 15; ++i) {
-        Monster eye;
-        eye.pos.x = randFloat() * 180.0f - 90.0f;
-        eye.pos.z = randFloat() * 180.0f - 90.0f;
-        
-        // Prevent spawning too close to Cabin (0,0)
-        float dCabin = std::sqrt(eye.pos.x*eye.pos.x + eye.pos.z*eye.pos.z);
-        if (dCabin < 20.0f) {
-            eye.pos.x += 25.0f * (eye.pos.x > 0 ? 1 : -1);
-            eye.pos.z += 25.0f * (eye.pos.z > 0 ? 1 : -1);
-        }
-
-        // Project eye to terrain height
-        eye.pos.y = getTerrainHeight(eye.pos.x, eye.pos.z) + 1.6f;
-        redEyes.push_back(eye);
+    // Rocks
+    for(int i=0; i<9; i++) {
+        float x = randFloat()*180-90;
+        float z = randFloat()*180-90;
+        if (fabs(x) < 25 && fabs(z) < 25) continue;
+        villageObjects.push_back({{x, getTerrainHeight(x,z), z}, 1, 0.7f + randFloat()*0.6f});
     }
 
-    // Spawn 10 Silhouettes around the trees
-    for (int i = 0; i < 10; ++i) {
-        Monster sil;
-        sil.pos.x = randFloat() * 160.0f - 80.0f;
-        sil.pos.z = randFloat() * 160.0f - 80.0f;
+    // Fences around village
+    villageObjects.push_back({{-55, getTerrainHeight(-55,-45), -45}, 2, 1.0f});
+    villageObjects.push_back({{38, getTerrainHeight(38,-42), -42}, 2, 1.0f});
+}
 
-        float dCabin = std::sqrt(sil.pos.x*sil.pos.x + sil.pos.z*sil.pos.z);
-        if (dCabin < 25.0f) {
-            sil.pos.x += 30.0f * (sil.pos.x > 0 ? 1 : -1);
-            sil.pos.z += 30.0f * (sil.pos.z > 0 ? 1 : -1);
-        }
+void Game::spawnCollectibles() {
+    lcg_seed = 987654321;
+    woodLogs.clear(); flowers.clear(); stones.clear();
 
-        sil.pos.y = getTerrainHeight(sil.pos.x, sil.pos.z) + 2.0f;
-        silhouettes.push_back(sil);
+    woodLogs = {
+        {{14,0.4f,-9},false,"log"},
+        {{-16,0.4f,14},false,"log"},
+        {{11,0.4f,18},false,"log"}
+    };
+
+    for(int i=0; i<16; i++) {
+        float x = randFloat()*200-100;
+        float z = randFloat()*200-100;
+        flowers.push_back({{x,getTerrainHeight(x,z)+0.2f,z},false,"flower"});
+    }
+    for(int i=0; i<8; i++) {
+        float x = randFloat()*170-85;
+        float z = randFloat()*170-85;
+        stones.push_back({{x,getTerrainHeight(x,z)+0.1f,z},false,"stone"});
     }
 
-    // Day 3 firewood log piles coordinates (close to cabin)
-    woodLogs.push_back({ Vec3(10.0f, 0.4f, -6.0f), false });
-    woodLogs.push_back({ Vec3(-12.0f, 0.4f, 10.0f), false });
-    woodLogs.push_back({ Vec3(8.0f, 0.4f, 15.0f), false });
-
-    // Day 4 Diary page
-    diaryPage.pos = Vec3(-35.0f, 0.3f, -40.0f);
-    diaryPage.pos.y = getTerrainHeight(diaryPage.pos.x, diaryPage.pos.z) + 0.1f;
-
-    // Day 5 Sacred Cross position
-    woodenCross.pos = Vec3(45.0f, 1.8f, -45.0f);
-    woodenCross.pos.y = getTerrainHeight(woodenCross.pos.x, woodenCross.pos.z) + 1.8f;
+    oldTool = {{-58, getTerrainHeight(-58,-28)+0.3f, -28}, false, "tool"};
+    rareHerb = {{42, getTerrainHeight(42,38)+0.25f, 38}, false, "herb"};
 }
 
 void Game::setupDaySettings() {
-    state = STATE_INTRO;
-    stateTimer = 0.0f;
-    fadeAlpha = 1.0f;
-    wellInspected = false;
-    fear = 0.0f;
-    scareFlashAlpha = 0.0f;
-    chaserGraceTimer = 0.0f;
-    flashlightBattery = 1.0f;
-    for (auto& eye : redEyes) eye.opacity = 1.0f;
-    for (auto& sil : silhouettes) sil.opacity = 1.0f;
+    state = STATE_INTRO; stateTimer = 0; fadeAlpha = 1.0f;
+    wellRepaired = false; logsCollected = 0; flowersCollected = 0;
+    stonesCollected = 0; toolFound = false; herbFound = false;
+    flashlightOn = false; flashlightIntensity = 0;
+
+    float dayProgress = (currentDay - 1) / 8.0f;
+
+    fogDensity = 0.6f + dayProgress * 1.45f;
+    fogStart = 280.0f - dayProgress * 160.0f;
+    fogEnd = 780.0f - dayProgress * 320.0f;
+    fatigue = dayProgress * 0.58f;
 
     if (currentDay == 1) {
-        ambientColor = Vec3(0.25f, 0.22f, 0.20f);
-        dirLightColor = Vec3(0.95f, 0.80f, 0.65f); // warm late afternoon sun
-        dirLightDir = Vec3(0.6f, -0.6f, -0.4f);
-        fogColor = Vec3(0.70f, 0.82f, 0.90f); // pleasant atmosphere
-        fogStart = 150.0f;
-        fogEnd = 400.0f; // very far visibility! (30km in narrative)
-        flashlightOn = false;
-        flashlightIntensity = 0.0f;
-
-        objectiveText = loc.tr("day1.objective.initial", "Objective: Explore the valley and enjoy the peaceful forest.\nWhen you get tired, enter the cabin (0,0) and use your Bed.");
-        diaryText = loc.tr("day1.diary", "DAY 1: REFUGE\n\nI finally made it to the old cabin deep in the wooded valley.\nAway from the chaos of the city, the silence here is therapeutic.\nThe sun is warm, and the air smells of fresh pine needles.\nThis was the right choice. I should rest early tonight...");
+        ambientColor = {0.38f,0.41f,0.35f}; dirLightColor = {1.0f,0.97f,0.88f};
+        dirLightDir = {0.5f,-0.7f,-0.4f}; fogColor = {0.84f,0.9f,0.94f};
+        objectiveText = loc.tr("d1.obj", "Explore the open valley and the nearby village.");
+        diaryText = loc.tr("d1.diary", "DAY 1\n\nThe valley opens up before me.\nThere seems to be an old village nearby.\nI feel like staying here for a while.");
     }
     else if (currentDay == 2) {
-        ambientColor = Vec3(0.12f, 0.12f, 0.15f);
-        dirLightColor = Vec3(0.35f, 0.35f, 0.40f); // cold white sun
-        dirLightDir = Vec3(0.2f, -0.9f, -0.1f);
-        fogColor = Vec3(0.52f, 0.55f, 0.58f); // white chilly fog
-        fogStart = 60.0f;
-        fogEnd = 160.0f; // fog starts showing in distance (30km lore)
-        flashlightOn = false;
-        flashlightIntensity = 0.0f;
-
-        objectiveText = loc.tr("day2.objective.initial", "Objective: Check the old stone well in the northern forest (X:-20, Z:-50).\nReturn to the cabin Bed once inspected.");
-        diaryText = loc.tr("day2.diary", "DAY 2: THE WHITE WALL\n\nA dense, chilly fog has rolled into the valley overnight.\nIt feels unusually dead. No birds are singing, and no wind blows.\nI walked out to look at the old stone well today.\nA chilling draft blew up from the deep stone dark.\nI hurried back. It feels safer inside.");
+        ambientColor = {0.3f,0.34f,0.37f}; dirLightColor = {0.87f,0.9f,0.97f};
+        dirLightDir = {0.33f,-0.85f,-0.24f}; fogColor = {0.77f,0.84f,0.9f};
+        objectiveText = loc.tr("d2.obj", "Visit the old well near the village.");
+        diaryText = loc.tr("d2.diary", "DAY 2\n\nThe village feels abandoned but peaceful.\nThe well might still be usable.");
     }
     else if (currentDay == 3) {
-        ambientColor = Vec3(0.06f, 0.06f, 0.09f);
-        dirLightColor = Vec3(0.12f, 0.12f, 0.16f); // dark grey dreary twilight
-        dirLightDir = Vec3(-0.1f, -0.9f, -0.1f);
-        fogColor = Vec3(0.32f, 0.34f, 0.38f); // dark dense mist
-        fogStart = 30.0f;
-        fogEnd = 80.0f; // fog closing in (15km lore)
-        flashlightOn = false;
-        flashlightIntensity = 0.0f;
-
-        objectiveText = loc.tr("day3.objective.initial", "Objective: Collect 3 logs around the cabin woodpiles for fireplace.");
-        diaryText = loc.tr("day3.diary", "DAY 3: CONFINEMENT\n\nThe fog has become a suffocating, physical wall.\nI cannot see past the clearing of the cabin anymore.\nI feel an immense pressure in my head, like a static buzz.\nToday, while walking, I swear I heard the sound of snapping branches\nmimicking my own footsteps. I locked the heavy front door.");
+        ambientColor = {0.24f,0.28f,0.26f}; dirLightColor = {0.94f,0.87f,0.78f};
+        dirLightDir = {0.57f,-0.67f,-0.37f}; fogColor = {0.8f,0.84f,0.77f};
+        objectiveText = loc.tr("d3.obj", "Gather firewood from the edges of the forest.");
+        diaryText = loc.tr("d3.diary", "DAY 3\n\nThe evenings are getting colder.\nI should collect some wood.");
     }
     else if (currentDay == 4) {
-        ambientColor = Vec3(0.015f, 0.015f, 0.025f);
-        dirLightColor = Vec3(0.0f, 0.0f, 0.0f); // pitch black night
-        dirLightDir = Vec3(0.0f, -1.0f, 0.0f);
-        fogColor = Vec3(0.02f, 0.025f, 0.05f); // dark midnight fog
-        fogStart = 15.0f;
-        fogEnd = 40.0f; // extremely close visibility (10km lore)
-        flashlightOn = true;
-        flashlightIntensity = 1.0f;
-        flashlightBattery = 1.0f;
-
-        objectiveText = loc.tr("day4.objective.initial", "Objective: Find the dropped diary page in the western woods (X:-35, Z:-40).\nUse F / LIGHT to manage flashlight battery. RUN BACK once collected!");
-        diaryText = loc.tr("day4.diary", "DAY 4: RED EYES\n\nI am not alone in these woods.\nThey are hiding in the fog, standing behind the pines.\nWhen I point my flashlight, I see pairs of glowing red eyes...\nThey do not move. They just stand still in the dark. Staring.\nI found a note in the clearing. Someone else was here.\nI am so scared.");
+        ambientColor = {0.2f,0.24f,0.27f}; dirLightColor = {0.79f,0.83f,0.92f};
+        dirLightDir = {0.24f,-0.89f,-0.14f}; fogColor = {0.67f,0.74f,0.8f};
+        objectiveText = loc.tr("d4.obj", "Collect wildflowers growing near the village.");
+        diaryText = loc.tr("d4.diary", "DAY 4\n\nThe fog is thicker today.\nThe flowers still bring some color to this place.");
     }
     else if (currentDay == 5) {
-        ambientColor = Vec3(0.01f, 0.0f, 0.0f); // blood red ambient tint
-        dirLightColor = Vec3(0.0f, 0.0f, 0.0f);
-        dirLightDir = Vec3(0.0f, -1.0f, 0.0f);
-        fogColor = Vec3(0.10f, 0.01f, 0.01f); // terrifying blood-red fog!
-        fogStart = 8.0f;
-        fogEnd = 24.0f; // visibility is extremely bad (5km lore)
-        flashlightOn = true;
-        flashlightIntensity = 0.9f;
-        flashlightBattery = 0.65f;
-
-        objectiveText = loc.tr("day5.objective.initial", "Objective: Find the Holy Cross in the sacred grove (X:45, Z:-45)!\nYour flashlight battery is dying. Escape back to the Cabin!");
-        diaryText = loc.tr("day5.diary", "DAY 5: THE COLD SCREAM\n\nThey are scratching at the cabin walls. Whispering my name.\nThe fog is leaking through the wooden planks, smelling of blood.\nMy flashlight is dying. It keeps flickering.\nI found a note mentioning a wooden cross erected in the east.\nI must find it. There is no other way to hold them back...");
+        ambientColor = {0.17f,0.21f,0.24f}; dirLightColor = {0.73f,0.77f,0.86f};
+        dirLightDir = {0.36f,-0.81f,-0.29f}; fogColor = {0.59f,0.65f,0.72f};
+        objectiveText = loc.tr("d5.obj", "Search the area west of the village for useful tools.");
+        diaryText = loc.tr("d5.diary", "DAY 5\n\nI should look around the old houses.\nThere might be something left behind.");
     }
     else if (currentDay == 6) {
-        ambientColor = Vec3(0.002f, 0.002f, 0.004f);
-        dirLightColor = Vec3(0.0f, 0.0f, 0.0f);
-        dirLightDir = Vec3(0.0f, -1.0f, 0.0f);
-        fogColor = Vec3(0.005f, 0.005f, 0.008f); // pure charcoal black (1.5km lore)
-        fogStart = 3.0f;
-        fogEnd = 12.0f; // absolute zero visibility!
-        flashlightOn = false; // Flashlight is DEAD!
-        flashlightIntensity = 0.0f;
-
-        objectiveText = loc.tr("day6.objective.initial", "Objective: ESCAPE! RUN TO YOUR CAR PARKED AT THE ROAD END (X:10, Z:75)!");
-        diaryText = loc.tr("day6.diary", "DAY 6: NO ESCAPE\n\nMy flashlight is dead. Complete darkness.\nI can hear heavy panting and grinding teeth right behind my neck.\nIt's actively tracking me. I can feel its cold breath.\nMy car is parked on the northern lane.\nI have to run. I have to make it. RUN. RUN. RUN.");
-
-        // Spawn chaser far away initially
-        chaser.pos = Vec3(0.0f, 1.8f, -20.0f);
-        chaser.active = true;
-        chaser.opacity = 1.0f;
-        chaserGraceTimer = 3.0f;
+        ambientColor = {0.14f,0.18f,0.21f}; dirLightColor = {0.63f,0.68f,0.77f};
+        dirLightDir = {0.29f,-0.84f,-0.22f}; fogColor = {0.53f,0.58f,0.64f};
+        objectiveText = loc.tr("d6.obj", "Collect stones to reinforce paths around the cabin.");
+        diaryText = loc.tr("d6.diary", "DAY 6\n\nThe fog stays longer every day.\nMaking the paths clearer would help.");
+    }
+    else if (currentDay == 7) {
+        ambientColor = {0.12f,0.15f,0.18f}; dirLightColor = {0.56f,0.61f,0.71f};
+        dirLightDir = {0.38f,-0.82f,-0.26f}; fogColor = {0.46f,0.51f,0.57f};
+        objectiveText = loc.tr("d7.obj", "Find rare herbs in the deeper parts of the woods.");
+        diaryText = loc.tr("d7.diary", "DAY 7\n\nI feel more tired with each passing day.\nSome herbs might help.");
+    }
+    else if (currentDay == 8) {
+        ambientColor = {0.1f,0.13f,0.16f}; dirLightColor = {0.49f,0.54f,0.63f};
+        dirLightDir = {0.26f,-0.87f,-0.19f}; fogColor = {0.41f,0.45f,0.51f};
+        objectiveText = loc.tr("d8.obj", "Finish collecting everything needed.");
+        diaryText = loc.tr("d8.diary", "DAY 8\n\nThe valley feels more distant.\nI need to complete my tasks.");
+    }
+    else if (currentDay == 9) {
+        ambientColor = {0.09f,0.11f,0.14f}; dirLightColor = {0.43f,0.48f,0.56f};
+        dirLightDir = {0.31f,-0.84f,-0.23f}; fogColor = {0.36f,0.39f,0.45f};
+        objectiveText = loc.tr("d9.obj", "Return to the cabin. Your journey is ending.");
+        diaryText = loc.tr("d9.diary", "DAY 9\n\nAfter nine days the valley feels\nboth familiar and strangely quiet.\nIt is time to leave.");
     }
 }
 
-void Game::handleEvent(void* sdlEvent) {
-    SDL_Event* event = (SDL_Event*)sdlEvent;
-
-    if (event->type == SDL_KEYDOWN) {
-        if (event->key.keysym.scancode < 512) {
-            keys[event->key.keysym.scancode] = true;
-        }
-        if ((event->key.keysym.sym == SDLK_e || event->key.keysym.sym == SDLK_RETURN) && event->key.repeat == 0) {
+void Game::handleEvent(void* e) {
+    SDL_Event* ev = (SDL_Event*)e;
+    if (ev->type == SDL_KEYDOWN) {
+        if (ev->key.keysym.scancode < 512) keys[ev->key.keysym.scancode] = true;
+        if ((ev->key.keysym.sym == SDLK_e || ev->key.keysym.sym == SDLK_RETURN) && ev->key.repeat == 0)
             actionPressed = true;
-        }
-        if (event->key.keysym.sym == SDLK_f && event->key.repeat == 0) {
+        if (ev->key.keysym.sym == SDLK_f && ev->key.repeat == 0)
             flashlightTogglePressed = true;
-        }
-        if (event->key.keysym.sym == SDLK_F2 && event->key.repeat == 0) {
+        if (ev->key.keysym.sym == SDLK_F2 && ev->key.repeat == 0)
             languageCyclePressed = true;
-        }
-        if (event->key.repeat == 0) {
-            if (event->key.keysym.sym == SDLK_1) languageSelectRequested = 0;
-            if (event->key.keysym.sym == SDLK_2) languageSelectRequested = 1;
-            if (event->key.keysym.sym == SDLK_3) languageSelectRequested = 2;
-        }
-    }
-    else if (event->type == SDL_KEYUP) {
-        if (event->key.keysym.scancode < 512) {
-            keys[event->key.keysym.scancode] = false;
-        }
-    }
-    else if (event->type == SDL_MOUSEMOTION) {
-        if (state == STATE_GAMEPLAY && !isAndroid) {
-            // Mouse look
-            camera.processMouseMovement((float)event->motion.xrel, -(float)event->motion.yrel);
-        }
-    }
-    else if (event->type == SDL_FINGERDOWN) {
-        // Handle touch input for Android
-        float fx = event->tfinger.x * screenWidth;
-        float fy = event->tfinger.y * screenHeight;
-        long long touchId = event->tfinger.fingerId;
-
-        // Flashlight toggle button (upper-right, Days 4-5)
-        if (fx > screenWidth - 150.0f && fx < screenWidth - 30.0f &&
-            fy > 95.0f && fy < 215.0f) {
+    } else if (ev->type == SDL_KEYUP) {
+        if (ev->key.keysym.scancode < 512) keys[ev->key.keysym.scancode] = false;
+    } else if (ev->type == SDL_MOUSEMOTION && state == STATE_GAMEPLAY && !isAndroid) {
+        camera.processMouseMovement(ev->motion.xrel, -ev->motion.yrel);
+    } else if (ev->type == SDL_FINGERDOWN) {
+        float fx = ev->tfinger.x * screenWidth, fy = ev->tfinger.y * screenHeight;
+        long long id = ev->tfinger.fingerId;
+        if (fx > screenWidth-150 && fx < screenWidth-30 && fy > 95 && fy < 215)
             flashlightTogglePressed = true;
-        }
-        // Check for ACTION/INTERACT button (lower-right area)
-        else if (fx > screenWidth - 170.0f && fx < screenWidth - 50.0f &&
-            fy > screenHeight - 330.0f && fy < screenHeight - 210.0f) {
+        else if (fx > screenWidth-170 && fx < screenWidth-50 && fy > screenHeight-330 && fy < screenHeight-210)
             actionPressed = true;
+        else if (fx < screenWidth * 0.5f) { walkTouchId = id; activeJoyX = fx; activeJoyY = fy; }
+        else { lookTouchId = id; lastTouchCamX = fx; lastTouchCamY = fy; }
+    } else if (ev->type == SDL_FINGERMOTION) {
+        float fx = ev->tfinger.x * screenWidth, fy = ev->tfinger.y * screenHeight;
+        long long id = ev->tfinger.fingerId;
+        if (id == walkTouchId) { activeJoyX = fx; activeJoyY = fy; }
+        else if (id == lookTouchId) {
+            camera.processMouseMovement((fx-lastTouchCamX)*0.3f, -(fy-lastTouchCamY)*0.3f);
+            lastTouchCamX = fx; lastTouchCamY = fy;
         }
-        // Left half: movement joystick
-        else if (fx < screenWidth * 0.5f) {
-            walkTouchId = touchId;
-            activeJoyX = fx;
-            activeJoyY = fy;
-        }
-        // Right half: camera look drag area
-        else {
-            lookTouchId = touchId;
-            lastTouchCamX = fx;
-            lastTouchCamY = fy;
-            activeCamX = fx;
-            activeCamY = fy;
-        }
-    }
-    else if (event->type == SDL_FINGERMOTION) {
-        float fx = event->tfinger.x * screenWidth;
-        float fy = event->tfinger.y * screenHeight;
-        long long touchId = event->tfinger.fingerId;
-
-        if (touchId == walkTouchId) {
-            activeJoyX = fx;
-            activeJoyY = fy;
-
-            // Clamp active stick to joystick radius
-            float dx = activeJoyX - leftJoyX;
-            float dy = activeJoyY - leftJoyY;
-            float dist = std::sqrt(dx*dx + dy*dy);
-            if (dist > leftRadius) {
-                activeJoyX = leftJoyX + (dx / dist) * leftRadius;
-                activeJoyY = leftJoyY + (dy / dist) * leftRadius;
-            }
-        }
-        else if (touchId == lookTouchId) {
-            float dx = fx - lastTouchCamX;
-            float dy = fy - lastTouchCamY;
-
-            // Look sensitivity for touch controls
-            camera.processMouseMovement(dx * 0.35f, -dy * 0.35f);
-
-            lastTouchCamX = fx;
-            lastTouchCamY = fy;
-            activeCamX = fx;
-            activeCamY = fy;
-        }
-    }
-    else if (event->type == SDL_FINGERUP) {
-        long long touchId = event->tfinger.fingerId;
-
-        if (touchId == walkTouchId) {
-            walkTouchId = -1;
-            activeJoyX = leftJoyX;
-            activeJoyY = leftJoyY;
-        }
-        else if (touchId == lookTouchId) {
-            lookTouchId = -1;
-            activeCamX = rightJoyX;
-            activeCamY = rightJoyY;
-        }
+    } else if (ev->type == SDL_FINGERUP) {
+        long long id = ev->tfinger.fingerId;
+        if (id == walkTouchId) walkTouchId = -1;
+        else if (id == lookTouchId) lookTouchId = -1;
     }
 }
 
 void Game::triggerNextDay() {
     currentDay++;
-    if (currentDay > 6) {
-        currentDay = 1; // loop back or restart
-    }
+    if (currentDay > 9) currentDay = 1;
     setupDaySettings();
     resetPlayer();
 }
 
-void Game::update(float deltaTime) {
-    if (deltaTime > 0.1f) deltaTime = 0.1f; // Clamp delta to avoid massive teleports
+void Game::update(float dt) {
+    if (dt > 0.12f) dt = 0.12f;
+    stateTimer += dt;
 
-    stateTimer += deltaTime;
-
-    bool languageChanged = false;
-    if (languageSelectRequested == 0) { loc.loadLanguage("en"); languageChanged = true; }
-    if (languageSelectRequested == 1) { loc.loadLanguage("ru"); languageChanged = true; }
-    if (languageSelectRequested == 2) { loc.loadLanguage("es"); languageChanged = true; }
+    if (languageSelectRequested == 0) loc.loadLanguage("en");
+    if (languageSelectRequested == 1) loc.loadLanguage("ru");
+    if (languageSelectRequested == 2) loc.loadLanguage("es");
     languageSelectRequested = -1;
-
-    if (languageCyclePressed) {
-        loc.cycleLanguage();
-        languageCyclePressed = false;
-        languageChanged = true;
-    }
+    if (languageCyclePressed) { loc.cycleLanguage(); languageCyclePressed = false; }
 
     if (state == STATE_MENU) {
-        // Refresh menu/diary text after language changes without leaving the menu.
-        if (languageChanged) {
-            GameState oldState = state;
-            setupDaySettings();
-            state = oldState;
-        }
-        if (actionPressed) {
-            actionPressed = false;
-            state = STATE_INTRO;
-            fadeAlpha = 1.0f;
-            stateTimer = 0.0f;
-        }
-        flashlightTogglePressed = false;
+        if (actionPressed) { actionPressed = false; state = STATE_INTRO; fadeAlpha = 1.0f; }
         return;
     }
-
     if (state == STATE_INTRO) {
-        if (languageChanged) {
-            GameState oldState = state;
-            setupDaySettings();
-            state = oldState;
-        }
-        // Fade in text overlay
-        if (fadeAlpha > 0.0f) {
-            fadeAlpha -= deltaTime * 0.5f;
-            if (fadeAlpha < 0.0f) fadeAlpha = 0.0f;
-        }
-
-        // If action is pressed, advance to active gameplay!
-        if (actionPressed) {
-            actionPressed = false;
-            state = STATE_GAMEPLAY;
-            fadeAlpha = 0.0f;
-        }
-        flashlightTogglePressed = false;
+        if (fadeAlpha > 0) fadeAlpha -= dt * 0.55f;
+        if (actionPressed) { actionPressed = false; state = STATE_GAMEPLAY; fadeAlpha = 0; }
         return;
     }
-
     if (state == STATE_SLEEP_FADE) {
-        // Fade to black screen
-        fadeAlpha += deltaTime * 0.8f;
+        fadeAlpha += dt * 0.85f;
         if (fadeAlpha >= 1.0f) {
             fadeAlpha = 1.0f;
-            if (stateTimer > 2.0f) {
-                triggerNextDay();
-            }
+            if (stateTimer > 1.7f) triggerNextDay();
         }
-        flashlightTogglePressed = false;
         return;
     }
-
-    if (state == STATE_JUMPSCARE) {
-        // Red flashing screen + shake camera
-        camera.position += Vec3((randFloat() - 0.5f) * 0.2f, (randFloat() - 0.5f) * 0.2f, (randFloat() - 0.5f) * 0.2f);
-        if (actionPressed) {
-            actionPressed = false;
-            setupDaySettings(); // Restart day 6
-            resetPlayer();
-            state = STATE_GAMEPLAY;
-        }
-        flashlightTogglePressed = false;
-        return;
-    }
-
-    if (state == STATE_ESCAPE_WIN) {
+    if (state == STATE_ENDING) {
         if (actionPressed) {
             actionPressed = false;
             currentDay = 1;
@@ -771,704 +413,301 @@ void Game::update(float deltaTime) {
             resetPlayer();
             state = STATE_INTRO;
         }
-        flashlightTogglePressed = false;
         return;
     }
 
-    // STATE_GAMEPLAY UPDATE
-    // Capture a one-frame interaction token before it is consumed. This fixes Android
-    // ACTION: the previous code reset actionPressed before objectives could read it.
-    const bool interactPressed = actionPressed || keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RETURN];
+    const bool interact = actionPressed || keys[SDL_SCANCODE_E] || keys[SDL_SCANCODE_RETURN];
+    actionPressed = false;
 
-    const bool keyboardMoving = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D];
-    float joyDx = activeJoyX - leftJoyX;
-    float joyDy = activeJoyY - leftJoyY;
-    float joyDist = std::sqrt(joyDx * joyDx + joyDy * joyDy);
-    const bool mobileMoving = isAndroid && walkTouchId != -1 && joyDist > 10.0f;
+    bool kMove = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_D];
+    float jx = activeJoyX - leftJoyX, jy = activeJoyY - leftJoyY, jd = sqrt(jx*jx + jy*jy);
+    bool mMove = isAndroid && walkTouchId != -1 && jd > 12;
 
-    const bool wantsSprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ||
-                             (isAndroid && mobileMoving && joyDist > leftRadius * 0.82f);
-    isSprinting = wantsSprint && (keyboardMoving || mobileMoving) && stamina > 0.05f;
-    const float fearSlowdown = 1.0f - fear * 0.18f;
-    camera.movementSpeed = (isSprinting ? 8.8f : 4.5f) * fearSlowdown;
+    isSprinting = (keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ||
+                  (mMove && jd > leftRadius*0.78f)) && stamina > 0.12f;
+    camera.movementSpeed = isSprinting ? 7.2f : 4.1f;
 
-    // Keyboard controls using scancodes (guaranteed safety, < 512)
-    if (keys[SDL_SCANCODE_W]) camera.processKeyboard(1, deltaTime);
-    if (keys[SDL_SCANCODE_S]) camera.processKeyboard(2, deltaTime);
-    if (keys[SDL_SCANCODE_A]) camera.processKeyboard(3, deltaTime);
-    if (keys[SDL_SCANCODE_D]) camera.processKeyboard(4, deltaTime);
+    if (keys[SDL_SCANCODE_W]) camera.processKeyboard(1, dt);
+    if (keys[SDL_SCANCODE_S]) camera.processKeyboard(2, dt);
+    if (keys[SDL_SCANCODE_A]) camera.processKeyboard(3, dt);
+    if (keys[SDL_SCANCODE_D]) camera.processKeyboard(4, dt);
 
-    // Mobile Virtual Joystick movement processing
-    if (mobileMoving) {
-        float vx = joyDx / joyDist;
-        float vy = joyDy / joyDist;
-
-        float velocity = camera.movementSpeed * deltaTime;
-        Vec3 horizontalFront = Vec3(camera.front.x, 0.0f, camera.front.z).normalized();
-        Vec3 horizontalRight = Vec3(camera.right.x, 0.0f, camera.right.z).normalized();
-
-        // Move player based on joystick axes
-        camera.position -= horizontalFront * vy * velocity;
-        camera.position += horizontalRight * vx * velocity;
+    if (mMove) {
+        float vx = jx/jd, vy = jy/jd;
+        float vel = camera.movementSpeed * dt;
+        Vec3 hf = {camera.front.x, 0, camera.front.z}; hf = hf.normalized();
+        Vec3 hr = {camera.right.x, 0, camera.right.z}; hr = hr.normalized();
+        camera.position -= hf * vy * vel;
+        camera.position += hr * vx * vel;
     }
 
-    if (isSprinting) {
-        stamina = clamp(stamina - deltaTime * (0.22f + fear * 0.12f), 0.0f, 1.0f);
-    } else {
-        stamina = clamp(stamina + deltaTime * (0.14f - fear * 0.05f), 0.0f, 1.0f);
-    }
+    float fatiguePenalty = fatigue * 0.38f;
+    if (isSprinting) stamina = clamp(stamina - dt*(0.2f + fatiguePenalty*0.45f), 0, 1);
+    else stamina = clamp(stamina + dt*(0.23f - fatiguePenalty), 0, 1);
 
-    // Constrain player position to valley boundaries (keep inside play space)
-    float dCabin = std::sqrt(camera.position.x*camera.position.x + camera.position.z*camera.position.z);
-    camera.position.x = fmaxf(-120.0f, fminf(120.0f, camera.position.x));
-    camera.position.z = fmaxf(-120.0f, fminf(120.0f, camera.position.z));
-
-    // Force player height to follow terrain height
+    camera.position.x = clamp(camera.position.x, -160.0f, 160.0f);
+    camera.position.z = clamp(camera.position.z, -160.0f, 160.0f);
     camera.position.y = getTerrainHeight(camera.position.x, camera.position.z) + 1.8f;
 
-    // Flashlight battery + toggling. Light is powerful against the fog, but not free.
-    const bool flashlightDay = (currentDay == 4 || currentDay == 5);
-    if (flashlightDay && flashlightTogglePressed && flashlightBattery > 0.03f) {
+    if (flashlightTogglePressed) {
         flashlightOn = !flashlightOn;
+        flashlightTogglePressed = false;
     }
-    flashlightTogglePressed = false;
+    flashlightIntensity = flashlightOn ? 0.85f : 0;
 
-    if (flashlightDay) {
-        const float drainRate = (currentDay == 5) ? 0.052f : 0.026f;
-        const float recoverRate = (currentDay == 5) ? 0.006f : 0.018f;
-        if (flashlightOn) {
-            flashlightBattery = clamp(flashlightBattery - deltaTime * drainRate, 0.0f, 1.0f);
-            if (flashlightBattery <= 0.001f) {
-                flashlightOn = false;
-                scareFlashAlpha = std::max(scareFlashAlpha, 0.45f);
-            }
-        } else {
-            flashlightBattery = clamp(flashlightBattery + deltaTime * recoverRate, 0.0f, 1.0f);
-        }
-    }
+    float dCabin = sqrt(camera.position.x*camera.position.x + camera.position.z*camera.position.z);
 
-    if (flashlightOn) {
-        if (currentDay == 5) {
-            flashlightFlickerTimer += deltaTime;
-            if (flashlightFlickerTimer > 1.5f) {
-                const float lowBatteryPenalty = 1.0f - flashlightBattery;
-                if (rand() % 5 == 0) {
-                    flashlightIntensity = clamp((rand() % 10) / 10.0f - lowBatteryPenalty * 0.35f, 0.08f, 0.9f);
-                } else {
-                    flashlightIntensity = clamp(0.82f - lowBatteryPenalty * 0.45f, 0.15f, 0.9f);
-                }
-                if (flashlightFlickerTimer > 2.5f) flashlightFlickerTimer = 0.0f;
-            }
-        } else {
-            flashlightIntensity = flashlightDay ? clamp(0.35f + flashlightBattery * 0.75f, 0.25f, 1.1f) : 1.0f;
-        }
-    } else {
-        flashlightIntensity = 0.0f;
-    }
-
-    // Sound logic: visual heartbeat rate increase
-    heartbeatTimer += deltaTime;
-    float distToDanger = 200.0f;
-
-    if (currentDay == 6) {
-        distToDanger = (camera.position - chaser.pos).length();
-        // Heartbeat speed multiplies based on monster proximity
-        float factor = clamp((35.0f - distToDanger) / 35.0f, 0.0f, 1.0f);
-        heartbeatRate = 0.25f + (1.0f - factor) * 0.95f; // faster beats
-    }
-
-    // Fear / sanity pressure. Looking straight at things in the fog is costly;
-    // the cabin calms the player down.
-    float fearDelta = -0.055f * deltaTime;
-    auto isLookingAt = [&](const Vec3& pos, float dotThreshold) {
-        Vec3 toTarget = (pos - camera.position).normalized();
-        return Vec3::dot(camera.front, toTarget) > dotThreshold;
-    };
-
-    if (currentDay == 4 || currentDay == 5) {
-        if (flashlightDay && !flashlightOn) fearDelta += 0.045f * deltaTime;
-        if (dCabin < 5.0f) fearDelta -= 0.12f * deltaTime;
-
-        for (auto& eye : redEyes) {
-            float distEye = (camera.position - eye.pos).length();
-            bool seen = distEye < 55.0f && isLookingAt(eye.pos, 0.965f);
-            bool lit = seen && flashlightOn && flashlightIntensity > 0.15f;
-            if (lit) {
-                eye.opacity = clamp(eye.opacity - deltaTime * 0.75f, 0.18f, 1.0f);
-                fearDelta += 0.045f * deltaTime;
-            } else {
-                eye.opacity = clamp(eye.opacity + deltaTime * 0.20f, 0.18f, 1.0f);
-                if (seen) fearDelta += 0.18f * deltaTime;
-            }
-        }
-
-        for (auto& sil : silhouettes) {
-            float distSil = (camera.position - sil.pos).length();
-            bool seen = sil.opacity > 0.05f && distSil < 65.0f && isLookingAt(sil.pos, 0.955f);
-            if (seen) {
-                fearDelta += (flashlightOn ? 0.12f : 0.28f) * deltaTime;
-                if (flashlightOn && currentDay == 4) {
-                    sil.opacity = clamp(sil.opacity - deltaTime * 0.35f, 0.25f, 1.0f);
-                }
-            }
-        }
-    }
-
-    if (currentDay == 6) {
-        fearDelta += clamp((42.0f - distToDanger) / 42.0f, 0.0f, 1.0f) * 0.32f * deltaTime;
-    }
-
-    fear = clamp(fear + fearDelta, 0.0f, 1.0f);
-    scareFlashAlpha = clamp(scareFlashAlpha - deltaTime * 0.7f, 0.0f, 1.0f);
-    heartbeatRate = std::min(heartbeatRate, 1.1f - fear * 0.65f);
-
-    // ENTITIES & OBJECTIVES LOGIC BASED ON DAYS
+    // === 9 Days Objectives ===
     if (currentDay == 1) {
-        // Interactive Sleep
-        if (dCabin < 3.5f) {
-            objectiveText = loc.tr("day1.objective.sleep_prompt", "Press E (or Tap ACTION) on Bed inside cabin to sleep.");
-            if (interactPressed) {
-                actionPressed = false;
-                state = STATE_SLEEP_FADE;
-                stateTimer = 0.0f;
-            }
-        } else {
-            objectiveText = loc.tr("day1.objective.explore", "Objective: Explore the valley.\nEnter the Cabin (0,0) to sleep when tired.");
-        }
+        objectiveText = loc.tr("d1.explore", "Explore the valley and the old village.");
+        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
     else if (currentDay == 2) {
-        // Inspect the old stone well (X:-20, Z:-50)
-        float dWell = std::sqrt((camera.position.x + 20.0f)*(camera.position.x + 20.0f) + (camera.position.z + 50.0f)*(camera.position.z + 50.0f));
-        if (!wellInspected) {
-            objectiveText = loc.tr("day2.objective.find_well", "Objective: Check the old stone well (X:-20, Z:-50) in northern woods.");
-            if (dWell < 6.0f) {
-                wellInspected = true;
-                objectiveText = loc.tr("day2.objective.well_inspected", "Well inspected. Cold wind blows from below... RETURN TO CABIN BED.");
-            }
-        } else {
-            objectiveText = loc.tr("day2.objective.return", "Objective: Well inspected. Run back to Cabin Bed to sleep.");
-            if (dCabin < 3.5f) {
-                objectiveText = loc.tr("objective.sleep_prompt", "Press E (or Tap ACTION) to sleep.");
-                if (interactPressed) {
-                    wellInspected = false;
-                    actionPressed = false;
-                    state = STATE_SLEEP_FADE;
-                    stateTimer = 0.0f;
-                }
-            }
-        }
+        float dw = sqrt((camera.position.x+20)*(camera.position.x+20)+(camera.position.z+50)*(camera.position.z+50));
+        if (!wellRepaired) {
+            objectiveText = loc.tr("d2.check", "Inspect the well near the village.");
+            if (dw < 5.5f && interact) wellRepaired = true;
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
     else if (currentDay == 3) {
-        // Gather 3 wooden log piles around the cabin
-        for (int i = 0; i < 3; ++i) {
-            if (!woodLogs[i].collected) {
-                float dLog = (camera.position - woodLogs[i].pos).length();
-                if (dLog < 3.5f) {
-                    woodLogs[i].collected = true;
-                    logsCollected++;
-                }
-            }
+        for (auto& l : woodLogs) if (!l.collected && (camera.position - l.pos).length() < 3.3f && interact) {
+            l.collected = true; logsCollected++;
         }
-
-        if (logsCollected < 3) {
-            std::stringstream ss;
-            ss << loc.tr("day3.objective.gather_prefix", "Objective: Gather logs for fireplace around cabin (")
-               << logsCollected
-               << loc.tr("day3.objective.gather_suffix", "/3 gathered).");
-            objectiveText = ss.str();
-        } else {
-            objectiveText = loc.tr("day3.objective.done", "Objective: Log gathering completed. Return to Bed to sleep.");
-            if (dCabin < 3.5f) {
-                objectiveText = loc.tr("objective.sleep_prompt", "Press E (or Tap ACTION) to sleep.");
-                if (interactPressed) {
-                    actionPressed = false;
-                    state = STATE_SLEEP_FADE;
-                    stateTimer = 0.0f;
-                }
-            }
-        }
+        if (logsCollected < 3) objectiveText = "Collect firewood (" + std::to_string(logsCollected) + "/3)";
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
     else if (currentDay == 4) {
-        // Find missing diary page (X:-35, Z:-40)
-        float dPage = (camera.position - diaryPage.pos).length();
-        if (!diaryPage.collected) {
-            objectiveText = loc.tr("day4.objective.find_page", "Objective: Retrieve the lost notebook page in Western Woods (X:-35, Z:-40).\nFlashlight drains battery: press F / LIGHT to toggle.");
-            if (dPage < 4.0f) {
-                diaryPage.collected = true;
-                objectiveText = loc.tr("day4.objective.page_collected", "Page Collected! '...THEY ARE IN THE FOG...'. RUN BACK TO CABIN BED!");
-            }
-        } else {
-            objectiveText = loc.tr("day4.objective.return", "Objective: RUN BACK! Enter the Cabin Bed and LOCK the door!");
-            // Make shadows stare and fade on Day 4
-            for (auto& sil : silhouettes) {
-                float dSil = (camera.position - sil.pos).length();
-                if (dSil < 14.0f) {
-                    sil.opacity -= deltaTime * 1.5f;
-                    if (sil.opacity < 0.0f) sil.opacity = 0.0f;
-                }
-            }
-
-            if (dCabin < 3.5f) {
-                objectiveText = loc.tr("day4.objective.lock_prompt", "Press E (or Tap ACTION) to LOCK THE DOOR & sleep.");
-                if (interactPressed) {
-                    actionPressed = false;
-                    state = STATE_SLEEP_FADE;
-                    stateTimer = 0.0f;
-                }
-            }
+        for (auto& f : flowers) if (!f.collected && (camera.position - f.pos).length() < 2.9f && interact) {
+            f.collected = true; flowersCollected++;
         }
+        if (flowersCollected < 8) objectiveText = "Gather flowers (" + std::to_string(flowersCollected) + "/8)";
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
     else if (currentDay == 5) {
-        // Holy Cross in the sacred grove (X:45, Z:-45)
-        float dCross = (camera.position - woodenCross.pos).length();
-        if (!woodenCross.collected) {
-            objectiveText = loc.tr("day5.objective.find_cross", "Objective: Cabin is compromised! Find the Holy Cross in Eastern Grove (X:45, Z:-45).\nConserve flashlight battery. Panic slows you down.");
-            if (dCross < 5.0f) {
-                woodenCross.collected = true;
-                objectiveText = loc.tr("day5.objective.cross_collected", "The Cross glows! Red eyes scream in pain! Escape back to Cabin!");
-            }
-
-            // Silhouettes actively slide towards player when back is turned on Day 5
-            for (auto& sil : silhouettes) {
-                Vec3 dirToPlayer = (camera.position - sil.pos);
-                float dist = dirToPlayer.length();
-                if (dist > 15.0f && dist < 60.0f) {
-                    // Check if player is facing away from the silhouette
-                    float angle = Vec3::dot(camera.front, dirToPlayer.normalized());
-                    if (angle > -0.3f) { // backing away / side look
-                        sil.pos += dirToPlayer.normalized() * (1.8f * deltaTime);
-                        sil.pos.y = getTerrainHeight(sil.pos.x, sil.pos.z) + 2.0f;
-                    }
-                }
-            }
-        } else {
-            objectiveText = loc.tr("day5.objective.return", "Objective: Cross acquired. It burns them back -- run to Cabin and bar the door!");
-            fear = clamp(fear - deltaTime * 0.16f, 0.0f, 1.0f);
-            for (auto& sil : silhouettes) {
-                Vec3 away = (sil.pos - camera.position);
-                float dist = away.length();
-                if (dist < 38.0f && dist > 0.1f) {
-                    sil.pos += away.normalized() * (2.4f * deltaTime);
-                    sil.pos.y = getTerrainHeight(sil.pos.x, sil.pos.z) + 2.0f;
-                    sil.opacity = clamp(sil.opacity - deltaTime * 0.25f, 0.25f, 1.0f);
-                }
-            }
-            if (dCabin < 3.5f) {
-                objectiveText = loc.tr("day5.objective.bar_prompt", "Press E (or Tap ACTION) to bar the door.");
-                if (interactPressed) {
-                    actionPressed = false;
-                    state = STATE_SLEEP_FADE;
-                    stateTimer = 0.0f;
-                }
-            }
-        }
+        float dt = (camera.position - oldTool.pos).length();
+        if (!toolFound) {
+            objectiveText = loc.tr("d5.search", "Search west of the village for tools.");
+            if (dt < 4.5f && interact) toolFound = true;
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
     else if (currentDay == 6) {
-        // Day 6 ESCAPE to CAR (X:10, Z:75)
-        float dCar = std::sqrt((camera.position.x - 10.0f)*(camera.position.x - 10.0f) + (camera.position.z - 75.0f)*(camera.position.z - 75.0f));
-        objectiveText = loc.tr("day6.objective.escape", "Objective: NO LIGHTS! NO PATH! REACH THE PARKING ROAD (X:10, Z:75)!");
-
-        // Active Stalker chases the player. The first seconds are a grace period,
-        // then the monster dynamically pressures but avoids hopeless long-distance desync.
-        Vec3 dirToPlayer = (camera.position - chaser.pos);
-        float dist = dirToPlayer.length();
-        if (chaserGraceTimer > 0.0f) {
-            chaserGraceTimer -= deltaTime;
-            Vec3 behind = camera.position - Vec3(camera.front.x, 0.0f, camera.front.z).normalized() * 20.0f;
-            chaser.pos = Vec3(behind.x, getTerrainHeight(behind.x, behind.z) + 2.0f, behind.z);
-            dist = 20.0f;
-        } else {
-            float speed = 5.45f + fear * 1.1f + clamp(stateTimer / 120.0f, 0.0f, 1.0f) * 0.75f;
-            if (isLookingAt(chaser.pos, 0.94f) && dist < 30.0f) {
-                speed *= 0.72f; // looking back buys time, but raises fear elsewhere
-                fear = clamp(fear + deltaTime * 0.10f, 0.0f, 1.0f);
-            }
-            chaser.pos += dirToPlayer.normalized() * (speed * deltaTime);
-            chaser.pos.y = getTerrainHeight(chaser.pos.x, chaser.pos.z) + 2.0f;
-
-            if (dist > 55.0f) {
-                // Fog shortcut: if the player outpaces pathing too hard, the stalker reappears behind.
-                Vec3 behind = camera.position - Vec3(camera.front.x, 0.0f, camera.front.z).normalized() * 38.0f;
-                chaser.pos = Vec3(behind.x, getTerrainHeight(behind.x, behind.z) + 2.0f, behind.z);
-                scareFlashAlpha = std::max(scareFlashAlpha, 0.22f);
-            }
+        for (auto& s : stones) if (!s.collected && (camera.position - s.pos).length() < 3.1f && interact) {
+            s.collected = true; stonesCollected++;
         }
-
-        // If chaser catches player, screen jumpscare!
-        if (dist < 2.5f && chaserGraceTimer <= 0.0f) {
-            state = STATE_JUMPSCARE;
-            stateTimer = 0.0f;
-        }
-
-        if (dCar < 5.0f) {
-            objectiveText = loc.tr("day6.objective.car_prompt", "CAR REACHED! Press E (or Tap ACTION) to Start Engine and Escape!");
-            if (interactPressed) {
-                actionPressed = false;
-                state = STATE_ESCAPE_WIN;
-                stateTimer = 0.0f;
-            }
-        }
+        if (stonesCollected < 6) objectiveText = "Collect stones (" + std::to_string(stonesCollected) + "/6)";
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
     }
-
-    // Touch/key one-shot interactions are consumed once per gameplay frame.
-    actionPressed = false;
+    else if (currentDay == 7) {
+        float dh = (camera.position - rareHerb.pos).length();
+        if (!herbFound) {
+            objectiveText = loc.tr("d7.herb", "Find rare herbs in the deeper forest.");
+            if (dh < 4.2f && interact) herbFound = true;
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+    }
+    else if (currentDay == 8) {
+        objectiveText = loc.tr("d8.final", "Finish gathering resources.");
+        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+    }
+    else if (currentDay == 9) {
+        objectiveText = loc.tr("d9.end", "Return to the cabin to end your journey.");
+        if (dCabin < 4.2f && interact) { state = STATE_ENDING; stateTimer = 0; }
+    }
 }
 
-void Game::drawEntityBillboard(const Shader& shader, const Vec3& pos, float scaleX, float scaleY, bool isSil, float opacity) {
-    shader.use();
-
-    // Standard cylindrical billboard calculation: billboard faces camera on Y axis
-    Vec3 camPos = camera.position;
-    Vec3 dir = (camPos - pos);
-    float angle = std::atan2(dir.x, dir.z);
-
-    Mat4 modelMat = Mat4::translation(pos) * Mat4::rotationY(angle) * Mat4::scaling(Vec3(scaleX, scaleY, 1.0f));
-    shader.setMat4("model", modelMat);
-    shader.setMat4("view", camera.getViewMatrix());
-    
-    float ratio = (float)screenWidth / screenHeight;
-    shader.setMat4("projection", Mat4::perspective(45.0f * M_PI / 180.0f, ratio, 0.1f, 1000.0f));
-
-    shader.setVec3("viewPos", camera.position);
-    shader.setVec3("fogColor", fogColor);
-    shader.setFloat("fogStart", fogStart);
-    shader.setFloat("fogEnd", fogEnd);
-    shader.setVec3("itemPos", pos);
-
-    shader.setInt("isSilhouette", isSil ? 1 : 0);
-    shader.setFloat("opacity", opacity);
-
+void Game::drawBillboard(const Shader& sh, const Vec3& pos, float sx, float sy, int type, float op) {
+    sh.use();
+    Vec3 dir = camera.position - pos;
+    float ang = atan2(dir.x, dir.z);
+    Mat4 m = Mat4::translation(pos) * Mat4::rotationY(ang) * Mat4::scaling({sx, sy, 1});
+    sh.setMat4("model", m);
+    sh.setMat4("view", camera.getViewMatrix());
+    float r = float(screenWidth) / screenHeight;
+    sh.setMat4("projection", Mat4::perspective(45*M_PI/180, r, 0.1f, 1100));
+    sh.setVec3("itemPos", pos);
+    sh.setInt("itemType", type);
+    sh.setFloat("opacity", op);
+    sh.setFloat("fogDensity", fogDensity);
     billboardQuad.draw();
 }
 
 void Game::render() {
-    // Clear screen
-    glClearColor(fogColor.x, fogColor.y, fogColor.z, 1.0f);
+    glClearColor(fogColor.x, fogColor.y, fogColor.z, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
     if (state == STATE_MENU) {
-        float bg[4] = {0.005f, 0.006f, 0.008f, 1.0f};
-        ui.drawRect(0, 0, screenWidth, screenHeight, bg);
-
-        // Minimal atmospheric menu: dark bands and fog-like panels.
-        float band[4] = {0.08f, 0.08f, 0.10f, 0.22f};
-        for (int i = 0; i < 6; ++i) {
-            float y = std::fmod(stateTimer * (14.0f + i * 3.0f) + i * 97.0f, (float)screenHeight);
-            ui.drawRect(0.0f, y, (float)screenWidth, 18.0f + i * 3.0f, band);
-        }
-
-        float titleCol[4] = {0.86f, 0.88f, 0.92f, 1.0f};
-        float redCol[4] = {0.75f, 0.05f, 0.04f, 1.0f};
-        float textCol[4] = {0.72f, 0.74f, 0.78f, 1.0f};
-        float dimCol[4] = {0.50f, 0.52f, 0.56f, 1.0f};
-
-        ui.drawText(loc.tr("menu.title", "ANXIETY FOG"), screenWidth * 0.12f, screenHeight * 0.16f, 4.0f, titleCol);
-        ui.drawText(loc.tr("menu.subtitle", "A procedural horror loop"), screenWidth * 0.125f, screenHeight * 0.29f, 1.5f, redCol);
-
-        std::stringstream langLine;
-        langLine << loc.tr("menu.language", "Language") << ": " << loc.currentName();
-        ui.drawText(langLine.str(), screenWidth * 0.12f, screenHeight * 0.44f, 1.5f, textCol);
-        ui.drawText(loc.tr("menu.language_hint", "1 English  2 Русский  3 Espanol  /  F2 next"), screenWidth * 0.12f, screenHeight * 0.50f, 1.2f, dimCol);
-        ui.drawText(loc.tr("menu.start", "Press ENTER / ACTION to open the diary"), screenWidth * 0.12f, screenHeight * 0.64f, 1.5f, textCol);
-        ui.drawText(loc.tr("menu.controls", "WASD move | Mouse look | Shift sprint | E interact | F flashlight"), screenWidth * 0.12f, screenHeight * 0.72f, 1.1f, dimCol);
-        return;
-    }
-
-    if (state == STATE_JUMPSCARE) {
-        // Red flashes and black bars
-        float flash = std::sin(stateTimer * 40.0f) * 0.5f + 0.5f;
-        float bloodColor[4] = {flash, 0.0f, 0.0f, 1.0f};
-        ui.drawRect(0, 0, screenWidth, screenHeight, bloodColor);
-
-        // Creepy static noise text overlay
-        float textCol[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-        ui.drawText(loc.tr("jumpscare.title", "THE FOG CLAIMED YOU"), screenWidth * 0.5f - 180.0f, screenHeight * 0.4f, 3.0f, textCol);
-        ui.drawText(loc.tr("jumpscare.subtitle", "THEY ARE ALIVE INSIDE THE FOG"), screenWidth * 0.5f - 240.0f, screenHeight * 0.5f, 2.0f, textCol);
-        ui.drawText(loc.tr("jumpscare.retry", "Press ACTION (or E) to retry Day 6."), screenWidth * 0.5f - 210.0f, screenHeight * 0.65f, 1.5f, textCol);
+        float bg[4] = {0.05f,0.06f,0.08f,1};
+        ui.drawRect(0,0,screenWidth,screenHeight,bg);
+        float t[4]={0.94f,0.96f,0.9f,1}, s[4]={0.77f,0.8f,0.74f,1};
+        ui.drawText(loc.tr("menu.title","AURA VALLEY"), screenWidth*0.1f, screenHeight*0.16f, 4.4f, t);
+        ui.drawText(loc.tr("menu.subtitle","Nine days in an open valley"), screenWidth*0.105f, screenHeight*0.3f, 1.8f, s);
+        ui.drawText(loc.tr("menu.start","Press ENTER to begin"), screenWidth*0.1f, screenHeight*0.56f, 1.6f, s);
         return;
     }
 
     if (state == STATE_INTRO) {
-        // Draw the creepy story screen
-        float black[4] = {0.02f, 0.02f, 0.03f, 1.0f};
-        ui.drawRect(0, 0, screenWidth, screenHeight, black);
-
-        float textCol[4] = {0.85f, 0.85f, 0.90f, 1.0f};
-        ui.drawText(diaryText, screenWidth * 0.12f, screenHeight * 0.2f, 1.6f, textCol);
-
-        float promptCol[4] = {0.6f, 0.0f, 0.0f, 1.0f + std::sin(stateTimer * 4.0f) * 0.3f};
-        ui.drawText(loc.tr("intro.prompt", "Press ACTION / ENTER to begin..."), screenWidth * 0.12f, screenHeight * 0.8f, 1.5f, promptCol);
+        float blk[4]={0.03f,0.035f,0.045f,1};
+        ui.drawRect(0,0,screenWidth,screenHeight,blk);
+        float tc[4]={0.9f,0.92f,0.87f,1};
+        ui.drawText(diaryText, screenWidth*0.08f, screenHeight*0.18f, 1.48f, tc);
+        float pr[4]={0.7f,0.74f,0.68f,0.82f + sin(stateTimer*3.1f)*0.2f};
+        ui.drawText(loc.tr("intro.prompt","Press ACTION to continue..."), screenWidth*0.08f, screenHeight*0.82f, 1.35f, pr);
         return;
     }
 
-    if (state == STATE_ESCAPE_WIN) {
-        float deepBlack[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-        ui.drawRect(0, 0, screenWidth, screenHeight, deepBlack);
-
-        float goldText[4] = {0.95f, 0.85f, 0.45f, 1.0f};
-        ui.drawText(loc.tr("win.title", "YOU SURVIVED"), screenWidth * 0.5f - 110.0f, screenHeight * 0.3f, 3.0f, goldText);
-        
-        float descText[4] = {0.8f, 0.8f, 0.8f, 1.0f};
-        ui.drawText(loc.tr("win.description", "You managed to start the old sedan and drive out of the valley.\nThe red eyes faded behind the rear view mirror.\nBut the fog inside your head remains...\n\nThank you for playing!"), 
-                    screenWidth * 0.15f, screenHeight * 0.45f, 1.5f, descText);
-
-        float replayText[4] = {0.5f, 0.5f, 0.5f, 1.0f};
-        ui.drawText(loc.tr("win.restart", "Press ACTION (or E) to restart the horror loop."), screenWidth * 0.15f, screenHeight * 0.85f, 1.2f, replayText);
+    if (state == STATE_ENDING) {
+        float dk[4]={0.02f,0.025f,0.03f,1};
+        ui.drawRect(0,0,screenWidth,screenHeight,dk);
+        float gd[4]={0.95f,0.92f,0.8f,1};
+        ui.drawText(loc.tr("end.title","The Valley Remembers"), screenWidth*0.5f-160, screenHeight*0.28f, 3.2f, gd);
+        ui.drawText(loc.tr("end.text","After nine days the valley feels\nboth familiar and strangely quiet.\nYou leave changed, but at peace."),
+                    screenWidth*0.16f, screenHeight*0.45f, 1.55f, {0.87f,0.89f,0.83f,1});
         return;
     }
 
-    // STATE_GAMEPLAY RENDER PIPELINE
+    // === 3D RENDER ===
     mainShader.use();
     mainShader.setMat4("view", camera.getViewMatrix());
-
-    float ratio = (float)screenWidth / screenHeight;
-    mainShader.setMat4("projection", Mat4::perspective(45.0f * M_PI / 180.0f, ratio, 0.1f, 1000.0f));
-
+    float ratio = float(screenWidth)/screenHeight;
+    mainShader.setMat4("projection", Mat4::perspective(45*M_PI/180, ratio, 0.1f, 1100));
     mainShader.setVec3("viewPos", camera.position);
     mainShader.setVec3("fogColor", fogColor);
     mainShader.setFloat("fogStart", fogStart);
     mainShader.setFloat("fogEnd", fogEnd);
+    mainShader.setFloat("fogDensity", fogDensity);
     mainShader.setFloat("time", stateTimer);
-
     mainShader.setVec3("ambientColor", ambientColor);
     mainShader.setVec3("dirLightColor", dirLightColor);
     mainShader.setVec3("dirLightDir", dirLightDir);
-
-    // Flashlight Spot settings
     mainShader.setVec3("flashPos", camera.position);
     mainShader.setVec3("flashDir", camera.front);
-    mainShader.setFloat("flashCutoff", std::cos(14.5f * M_PI / 180.0f)); // narrow focus cone
     mainShader.setFloat("flashIntensity", flashlightIntensity);
 
-    // 1. Draw Terrain
-    Mat4 terrainModel = Mat4::identity();
-    mainShader.setMat4("model", terrainModel);
+    // Terrain
+    mainShader.setMat4("model", Mat4::identity());
     mainShader.setInt("useTexture", 1);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, grassTexture.id);
     terrainMesh.draw();
 
-    // 2. Draw Cabin
-    Mat4 cabinModel = Mat4::identity();
-    mainShader.setMat4("model", cabinModel);
+    // Cabin
+    mainShader.setMat4("model", Mat4::identity());
     mainShader.setInt("useTexture", 1);
     glBindTexture(GL_TEXTURE_2D, woodTexture.id);
     cabinMesh.draw();
 
-    // 3. Draw Well (X:-20, Z:-50)
-    Mat4 wellModel = Mat4::translation(Vec3(-20.0f, getTerrainHeight(-20.0f, -50.0f), -50.0f));
-    mainShader.setMat4("model", wellModel);
+    // Village Houses
+    for (const auto& obj : villageObjects) {
+        if (obj.type == 0) {
+            Mat4 hm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale, obj.scale, obj.scale});
+            mainShader.setMat4("model", hm);
+            mainShader.setInt("useTexture", 0);
+            houseMesh.draw();
+        }
+    }
+
+    // Well
+    Mat4 wm = Mat4::translation({-20, getTerrainHeight(-20,-50), -50});
+    mainShader.setMat4("model", wm);
     mainShader.setInt("useTexture", 0);
     wellMesh.draw();
 
-    // 4. Draw Car (X:10, Z:75)
-    Mat4 carModel = Mat4::translation(Vec3(10.0f, getTerrainHeight(10.0f, 75.0f), 75.0f)) * Mat4::rotationY(M_PI / 4.0f);
-    mainShader.setMat4("model", carModel);
-    mainShader.setInt("useTexture", 0);
+    // Car
+    Mat4 cm = Mat4::translation({12, getTerrainHeight(12,78), 78}) * Mat4::rotationY(M_PI/4);
+    mainShader.setMat4("model", cm);
     carMesh.draw();
 
-    // 5. Draw Scattered Trees
+    // Trees
     mainShader.setInt("useTexture", 0);
     for (size_t i = 0; i < treePositions.size(); ++i) {
-        const Vec3& pos = treePositions[i];
-        float treeScale = treeScales[i];
-        Mat4 treeModel = Mat4::translation(pos) * Mat4::scaling(Vec3(treeScale, treeScale, treeScale));
-        mainShader.setMat4("model", treeModel);
+        Mat4 tm = Mat4::translation(treePositions[i]) * Mat4::scaling({treeScales[i]});
+        mainShader.setMat4("model", tm);
         treeMesh.draw();
     }
 
-    // 6. Draw Day 3 Logs
-    if (currentDay == 3) {
-        mainShader.setInt("useTexture", 0);
-        for (const auto& log : woodLogs) {
-            if (!log.collected) {
-                Mat4 logModel = Mat4::translation(log.pos) * Mat4::rotationX(M_PI / 2.0f) * Mat4::scaling(Vec3(0.5f, 0.5f, 1.8f));
-                mainShader.setMat4("model", logModel);
-                logMesh.draw();
-            }
+    // Village Rocks & Fences
+    for (const auto& obj : villageObjects) {
+        if (obj.type == 1) {
+            Mat4 rm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale});
+            mainShader.setMat4("model", rm);
+            rockMesh.draw();
+        } else if (obj.type == 2) {
+            Mat4 fm = Mat4::translation(obj.pos);
+            mainShader.setMat4("model", fm);
+            fenceMesh.draw();
         }
     }
 
-    // 7. Draw Day 4 Notebook Page
-    if (currentDay == 4 && !diaryPage.collected) {
-        Mat4 pageModel = Mat4::translation(diaryPage.pos) * Mat4::scaling(Vec3(0.4f, 0.05f, 0.5f));
-        mainShader.setMat4("model", pageModel);
-        mainShader.setInt("useTexture", 0);
-        pageMesh.draw();
+    // Collectibles
+    if (currentDay >= 3) for (const auto& l : woodLogs) if (!l.collected) {
+        Mat4 lm = Mat4::translation(l.pos) * Mat4::rotationX(M_PI/2) * Mat4::scaling({0.5f});
+        mainShader.setMat4("model", lm);
+        logMesh.draw();
+    }
+    if (currentDay >= 4) for (const auto& f : flowers) if (!f.collected) {
+        Mat4 fm = Mat4::translation(f.pos) * Mat4::scaling({0.85f});
+        mainShader.setMat4("model", fm);
+        flowerMesh.draw();
+    }
+    if (currentDay >= 6) for (const auto& s : stones) if (!s.collected) {
+        Mat4 sm = Mat4::translation(s.pos) * Mat4::scaling({0.75f});
+        mainShader.setMat4("model", sm);
+        stoneMesh.draw();
+    }
+    if (currentDay >= 5 && !toolFound) {
+        Mat4 tm = Mat4::translation(oldTool.pos) * Mat4::scaling({0.72f});
+        mainShader.setMat4("model", tm);
+        toolMesh.draw();
+    }
+    if (currentDay >= 7 && !herbFound) {
+        Mat4 hm = Mat4::translation(rareHerb.pos) * Mat4::scaling({0.68f});
+        mainShader.setMat4("model", hm);
+        toolMesh.draw();
     }
 
-    // 8. Draw Day 5 Wooden Cross
-    if (currentDay == 5 && !woodenCross.collected) {
-        const float glowScale = 1.0f + std::sin(stateTimer * 6.0f) * 0.04f;
-        Mat4 crossModel = Mat4::translation(woodenCross.pos) * Mat4::scaling(Vec3(glowScale, glowScale, glowScale));
-        mainShader.setMat4("model", crossModel);
-        mainShader.setInt("useTexture", 0);
-
-        // Horizontal and vertical planks
-        crossVerticalMesh.draw();
-        crossHorizontalMesh.draw();
-    }
-
-    // RENDER BILLBOARDS (REDEYES & SILHOUETTES)
-    // Blend mode for sprite/alpha opacity drawing
+    // Billboards
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE); // transparent quads should not block each other via depth writes
+    glDepthMask(GL_FALSE);
 
-    // Render Red Eyes (Day 4 & Day 5)
-    if (currentDay == 4 || currentDay == 5) {
-        for (const auto& eye : redEyes) {
-            float dist = (camera.position - eye.pos).length();
-            if (dist < 45.0f) {
-                // Eyes face camera, scale size nicely
-                float opacity = eye.opacity;
-                if (dist < 18.0f) {
-                    opacity *= (dist - 5.0f) / 13.0f; // fade away when getting close!
-                    if (opacity < 0.0f) opacity = 0.0f;
-                }
-                if (opacity > 0.0f) {
-                    drawEntityBillboard(billboardShader, eye.pos, 0.5f, 0.3f, false, opacity);
-                }
-            }
-        }
-    }
-
-    // Render Silhouettes (Day 4 & Day 5)
-    if (currentDay == 4 || currentDay == 5) {
-        for (const auto& sil : silhouettes) {
-            if (sil.opacity > 0.01f) {
-                float dist = (camera.position - sil.pos).length();
-                if (dist < 60.0f) {
-                    drawEntityBillboard(billboardShader, sil.pos, 1.2f, 2.5f, true, sil.opacity);
-                }
-            }
-        }
-    }
-
-    // Render Chaser Stalker on Day 6
-    if (currentDay == 6 && chaser.active) {
-        drawEntityBillboard(billboardShader, chaser.pos, 1.4f, 2.8f, true, chaser.opacity);
+    if (currentDay >= 4) for (const auto& f : flowers) if (!f.collected) {
+        float d = (camera.position - f.pos).length();
+        if (d < 55) drawBillboard(billboardShader, f.pos, 1.0f, 1.2f, 0);
     }
 
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 
-    // DRAW UI OVERLAYS (HUD, INSTRUCTIONS, HEARTBEAT SCREEN SHAKE)
-    float textCol[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // === UI ===
+    float tc[4] = {0.96f,0.97f,0.93f,1};
+    std::stringstream ds; ds << "Day " << currentDay << " / 9";
+    ui.drawText(ds.str(), 22, 22, 2.1f, tc);
+    ui.drawText(objectiveText, 22, 58, 1.2f, tc);
+
+    // Stamina + Fatigue
+    float sbg[4] = {0.07f,0.07f,0.07f,0.55f};
+    ui.drawRect(22, screenHeight-42, 195, 11, sbg);
+    float sCol[4] = {0.38f + fatigue*0.28f, 0.82f - fatigue*0.38f, 0.42f, 0.82f};
+    ui.drawRect(26, screenHeight-39, 187*stamina, 5.5f, sCol);
+
+    if (fatigue > 0.12f) {
+        float fatCol[4] = {0.52f, 0.32f, 0.22f, 0.6f};
+        ui.drawRect(22, screenHeight-58, 195*fatigue, 4, fatCol);
+    }
+
     if (currentDay >= 5) {
-        // Red pulse on HUD if stalking is close. Day 6 uses the actual chaser distance;
-        // Day 5 keeps a constant dread vignette.
-        float danger = 0.22f;
-        if (currentDay == 6) {
-            danger = 1.0f - clamp((camera.position - chaser.pos).length() / 45.0f, 0.0f, 1.0f);
-        }
-        const float pulse = 0.55f + 0.45f * std::sin(heartbeatTimer * (6.28318f / std::max(0.12f, heartbeatRate)));
-        float redBorder[4] = {0.8f, 0.0f, 0.0f, (0.08f + 0.18f * pulse) * danger};
-        ui.drawRect(0, 0, screenWidth, screenHeight, redBorder);
+        float lc[4] = flashlightOn ? 
+            (float[4]){0.9f,0.86f,0.52f,0.82f} : (float[4]){0.32f,0.32f,0.32f,0.5f};
+        ui.drawRect(screenWidth-155, 88, 108, 36, lc);
     }
 
-    if (currentDay >= 4) {
-        float panicTint[4] = {0.02f, 0.0f, 0.0f, fear * 0.18f};
-        ui.drawRect(0, 0, screenWidth, screenHeight, panicTint);
-        if (fear > 0.58f) {
-            float staticCol[4] = {1.0f, 1.0f, 1.0f, (fear - 0.58f) * 0.10f};
-            float y1 = std::fmod(stateTimer * 97.0f, (float)screenHeight);
-            float y2 = std::fmod(stateTimer * 151.0f + 80.0f, (float)screenHeight);
-            ui.drawRect(0.0f, y1, (float)screenWidth, 2.0f, staticCol);
-            ui.drawRect(0.0f, y2, (float)screenWidth, 1.0f, staticCol);
-        }
-        if (scareFlashAlpha > 0.01f) {
-            float scareCol[4] = {1.0f, 1.0f, 1.0f, scareFlashAlpha * 0.35f};
-            ui.drawRect(0, 0, screenWidth, screenHeight, scareCol);
-        }
-    }
-
-    // Draw Crosshair
-    float white[4] = {1.0f, 1.0f, 1.0f, 0.5f};
-    ui.drawRect(screenWidth * 0.5f - 2.0f, screenHeight * 0.5f - 2.0f, 4.0f, 4.0f, white);
-
-    // Text HUD
-    std::stringstream ssDay;
-    ssDay << loc.tr("hud.day", "DAY") << ": " << currentDay << " / 6";
-    ui.drawText(ssDay.str(), 20.0f, 20.0f, 2.0f, textCol);
-
-    ui.drawText(objectiveText, 20.0f, 60.0f, 1.2f, textCol);
-
-    // Stamina bar: sprint becomes a tactical resource instead of a free escape button.
-    float staminaBg[4] = {0.02f, 0.02f, 0.02f, 0.65f};
-    float staminaCol[4] = {0.15f + (1.0f - stamina) * 0.75f, 0.85f * stamina, 0.20f, 0.85f};
-    ui.drawRect(20.0f, screenHeight - 34.0f, 210.0f, 14.0f, staminaBg);
-    ui.drawRect(25.0f, screenHeight - 31.0f, 200.0f * stamina, 8.0f, staminaCol);
-    float staminaText[4] = {0.8f, 0.8f, 0.8f, 0.7f};
-    ui.drawText(isSprinting ? loc.tr("hud.sprint", "SPRINT") : loc.tr("hud.stamina", "STAMINA"), 20.0f, screenHeight - 56.0f, 1.0f, staminaText);
-
-    if (currentDay >= 4) {
-        float fearBg[4] = {0.02f, 0.0f, 0.0f, 0.65f};
-        float fearCol[4] = {0.85f, 0.05f, 0.05f, 0.82f};
-        ui.drawRect(20.0f, screenHeight - 76.0f, 210.0f, 12.0f, fearBg);
-        ui.drawRect(25.0f, screenHeight - 73.0f, 200.0f * fear, 6.0f, fearCol);
-        ui.drawText(loc.tr("hud.panic", "PANIC"), 20.0f, screenHeight - 96.0f, 1.0f, staminaText);
-    }
-
-    if (currentDay == 4 || currentDay == 5) {
-        float batteryBg[4] = {0.02f, 0.02f, 0.02f, 0.65f};
-        float batteryCol[4] = {0.95f, 0.86f, 0.35f, flashlightOn ? 0.90f : 0.45f};
-        ui.drawRect(250.0f, screenHeight - 34.0f, 210.0f, 14.0f, batteryBg);
-        ui.drawRect(255.0f, screenHeight - 31.0f, 200.0f * flashlightBattery, 8.0f, batteryCol);
-        ui.drawText(flashlightOn ? loc.tr("hud.light_on", "LIGHT ON") : loc.tr("hud.light_off", "LIGHT OFF"), 250.0f, screenHeight - 56.0f, 1.0f, staminaText);
-    }
-
-    if (isAndroid && (currentDay == 4 || currentDay == 5)) {
-        float lightButton[4] = {0.9f, 0.75f, 0.2f, flashlightOn ? 0.55f : 0.28f};
-        ui.drawRect(screenWidth - 150.0f, 95.0f, 120.0f, 120.0f, lightButton);
-        float lightText[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-        ui.drawText(loc.tr("hud.light_button", "LIGHT"), screenWidth - 140.0f, 145.0f, 1.3f, lightText);
-    }
-
-    // Display coordinate trackers on Android or for easier guidance
-    std::stringstream ssCoords;
-    ssCoords << loc.tr("hud.coords", "COORDS") << ": X:" << (int)camera.position.x << " Z:" << (int)camera.position.z;
-    float coordsColor[4] = {0.8f, 0.8f, 0.8f, 0.6f};
-    ui.drawText(ssCoords.str(), screenWidth - 250.0f, 20.0f, 1.2f, coordsColor);
-
-    std::stringstream ssLang;
-    ssLang << loc.tr("hud.lang", "LANG") << ": " << loc.currentName() << " (F2)";
-    ui.drawText(ssLang.str(), screenWidth - 250.0f, 68.0f, 1.0f, coordsColor);
-
-    // Lightweight target tracker: keeps the horror navigation tense, but not confusing.
-    Vec3 targetPos;
-    std::string targetName;
-    bool hasTarget = true;
-    if (currentDay == 1) { targetPos = Vec3(0.0f, 0.0f, 0.0f); targetName = loc.tr("target.cabin", "CABIN"); }
-    else if (currentDay == 2) { targetPos = wellInspected ? Vec3(0.0f, 0.0f, 0.0f) : Vec3(-20.0f, 0.0f, -50.0f); targetName = wellInspected ? loc.tr("target.cabin", "CABIN") : loc.tr("target.well", "WELL"); }
-    else if (currentDay == 3) {
-        targetPos = Vec3(0.0f, 0.0f, 0.0f);
-        targetName = loc.tr("target.cabin", "CABIN");
-        for (const auto& log : woodLogs) {
-            if (!log.collected) { targetPos = log.pos; targetName = loc.tr("target.log", "LOG"); break; }
-        }
-    }
-    else if (currentDay == 4) { targetPos = diaryPage.collected ? Vec3(0.0f, 0.0f, 0.0f) : diaryPage.pos; targetName = diaryPage.collected ? loc.tr("target.cabin", "CABIN") : loc.tr("target.page", "PAGE"); }
-    else if (currentDay == 5) { targetPos = woodenCross.collected ? Vec3(0.0f, 0.0f, 0.0f) : woodenCross.pos; targetName = woodenCross.collected ? loc.tr("target.cabin", "CABIN") : loc.tr("target.cross", "CROSS"); }
-    else if (currentDay == 6) { targetPos = Vec3(10.0f, 0.0f, 75.0f); targetName = loc.tr("target.car", "CAR"); }
-    else { hasTarget = false; }
-    if (hasTarget) {
-        float distToTarget = Vec3(camera.position.x - targetPos.x, 0.0f, camera.position.z - targetPos.z).length();
-        std::stringstream ssTarget;
-        ssTarget << loc.tr("hud.target", "TARGET") << ": " << targetName << " " << (int)distToTarget << "m";
-        ui.drawText(ssTarget.str(), screenWidth - 250.0f, 44.0f, 1.2f, coordsColor);
-    }
-
-    // Draw Touch Controls on Android Screen
     ui.drawVirtualJoysticks(leftJoyX, leftJoyY, leftRadius, activeJoyX, activeJoyY,
                             rightJoyX, rightJoyY, rightRadius, activeCamX, activeCamY,
-                            isAndroid, loc.tr("hud.action_button", "ACTION"));
+                            isAndroid, "ACTION");
 
-    // Day Transition fading logic
     if (state == STATE_SLEEP_FADE) {
-        float blackFade[4] = {0.0f, 0.0f, 0.0f, fadeAlpha};
-        ui.drawRect(0, 0, screenWidth, screenHeight, blackFade);
+        float blk[4] = {0,0,0,fadeAlpha};
+        ui.drawRect(0,0,screenWidth,screenHeight,blk);
     }
 }
 
@@ -1482,12 +721,14 @@ void Game::cleanup() {
     treeMesh.cleanup();
     wellMesh.cleanup();
     carMesh.cleanup();
+    houseMesh.cleanup();
+    rockMesh.cleanup();
+    fenceMesh.cleanup();
+    pathMesh.cleanup();
     billboardQuad.cleanup();
     logMesh.cleanup();
-    pageMesh.cleanup();
-    crossVerticalMesh.cleanup();
-    crossHorizontalMesh.cleanup();
-    treePositions.clear();
-    treeScales.clear();
+    flowerMesh.cleanup();
+    stoneMesh.cleanup();
+    toolMesh.cleanup();
     ui.cleanup();
 }

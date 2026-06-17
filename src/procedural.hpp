@@ -11,3 +11,9 @@ void generateCabin(Mesh& mesh);
 void generateTree(Mesh& mesh);
 void generateWell(Mesh& mesh);
 void generateCar(Mesh& mesh);
+
+// === New village & open world meshes ===
+void generateHouse(Mesh& mesh, bool hasChimney = true);
+void generateRock(Mesh& mesh, float scale = 1.0f);
+void generateFence(Mesh& mesh, float length = 4.0f);
+void generatePath(Mesh& mesh, float width, float length);
