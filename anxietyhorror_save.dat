@@ -1,6 +1,6 @@
-currentDay=1
-wellRepaired=0
-logsCollected=0
+currentDay=4
+wellRepaired=1
+logsCollected=3
 flowersCollected=0
 stonesCollected=0
 toolFound=0

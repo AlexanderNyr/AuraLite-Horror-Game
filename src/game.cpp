@@ -28,6 +28,39 @@ static float randFloat() {
     return (float)lcg_seed / (float)0x7fffffff;
 }
 
+static float distancePointToSegmentXZ(float px, float pz, const Vec3& a, const Vec3& b) {
+    float abx = b.x - a.x;
+    float abz = b.z - a.z;
+    float apx = px - a.x;
+    float apz = pz - a.z;
+    float len2 = abx * abx + abz * abz;
+    if (len2 < 0.0001f) {
+        float dx = px - a.x;
+        float dz = pz - a.z;
+        return std::sqrt(dx * dx + dz * dz);
+    }
+    float t = clamp((apx * abx + apz * abz) / len2, 0.0f, 1.0f);
+    float cx = a.x + abx * t;
+    float cz = a.z + abz * t;
+    float dx = px - cx;
+    float dz = pz - cz;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+static void addAabb(std::vector<AABB>& boxes, const Vec3& center, const Vec3& halfExtents) {
+    boxes.push_back({ center - halfExtents, center + halfExtents });
+}
+
+static void resetProgressData(Game& game) {
+    game.wellRepaired = false;
+    game.logsCollected = 0;
+    game.flowersCollected = 0;
+    game.stonesCollected = 0;
+    game.toolFound = false;
+    game.herbFound = false;
+    game.syncCollectiblesWithSave();
+}
+
 void Game::syncCollectiblesWithSave() {
     for (size_t i = 0; i < woodLogs.size(); ++i) {
         woodLogs[i].collected = ((int)i < logsCollected);
@@ -100,8 +133,8 @@ void Game::applySettings() {
     // We recompute current day fog if we are already in a day
     if (currentDay >= 1 && currentDay <= 9) {
         float dayProgress = (currentDay - 1) / 8.0f;
-        fogStart = (280.0f - dayProgress * 160.0f) * settings.viewDistance;
-        fogEnd   = (780.0f - dayProgress * 320.0f) * settings.viewDistance;
+        fogStart = (42.0f - dayProgress * 26.0f) * settings.viewDistance;
+        fogEnd   = (210.0f - dayProgress * 118.0f) * settings.viewDistance;
     }
 }
 
@@ -125,14 +158,17 @@ void Game::init(int width, int height, bool mobileMode) {
 
         out vec3 FragPos; out vec3 Normal; out vec2 TexCoord; out vec4 Color;
         out vec4 FragPosLight;
+        out vec4 FragPosFlash;
         uniform mat4 model, view, projection;
         uniform mat4 lightSpaceMatrix;
+        uniform mat4 flashLightSpaceMatrix;
         void main() {
             vec4 wp = model * vec4(aPos, 1.0);
             FragPos = wp.xyz;
             Normal = mat3(transpose(inverse(model))) * aNormal;
             TexCoord = aTexCoord; Color = aColor;
             FragPosLight = lightSpaceMatrix * wp;
+            FragPosFlash = flashLightSpaceMatrix * wp;
             gl_Position = projection * view * wp;
         }
     )glsl";
@@ -140,6 +176,7 @@ void Game::init(int width, int height, bool mobileMode) {
     std::string frag3D = R"glsl(
         in vec3 FragPos; in vec3 Normal; in vec2 TexCoord; in vec4 Color;
         in vec4 FragPosLight;
+        in vec4 FragPosFlash;
         out vec4 FragColor;
 
         uniform vec3 viewPos, fogColor, ambientColor, dirLightColor, dirLightDir;
@@ -148,6 +185,7 @@ void Game::init(int width, int height, bool mobileMode) {
         uniform sampler2D texture_diffuse; uniform int useTexture;
         uniform float matRoughness, matMetallic;
         uniform sampler2DShadow shadowMap;
+        uniform sampler2DShadow flashShadowMap; uniform int useFlashShadow;
 
         const float PI = 3.14159265359;
 
@@ -205,6 +243,23 @@ void Game::init(int width, int height, bool mobileMode) {
             return sum/9.0;
         }
 
+        float flashShadowFactor(vec4 fpl, float NdotF){
+            if(useFlashShadow == 0) return 1.0;
+            vec3 proj = fpl.xyz / fpl.w;
+            proj = proj * 0.5 + 0.5;
+            if(proj.z > 1.0) return 1.0;
+            if(proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+            float bias = max(0.0035 * (1.0 - NdotF), 0.0010);
+            float texel = 1.0/1024.0;
+            float sum = 0.0;
+            for(int x=-1;x<=1;++x)
+              for(int y=-1;y<=1;++y){
+                vec3 c = vec3(proj.xy + vec2(x,y)*texel, proj.z - bias);
+                sum += texture(flashShadowMap, c);
+              }
+            return sum/9.0;
+        }
+
         // ACES filmic tonemap (Narkowicz approximation).
         vec3 ACES(vec3 x){
             const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
@@ -235,18 +290,18 @@ void Game::init(int width, int height, bool mobileMode) {
             vec3 spec = (NDF*Geo*F) / max(4.0*max(dot(N,V),0.0)*NdotL, 1e-4);
             vec3 kd = (vec3(1.0)-F)*(1.0-metal);
             float shadow = shadowFactor(FragPosLight, NdotL);
-            vec3 direct = (kd*albedo/PI + spec) * dirLightColor * NdotL * (0.25 + 0.75*shadow) * 3.0;
+            vec3 direct = (kd*albedo/PI + spec) * dirLightColor * NdotL * (0.08 + 0.92*shadow) * 3.4;
 
             // hemispheric ambient (sky / ground IBL approximation)
             float hemi = N.y*0.5+0.5;
-            vec3 sky=ambientColor*mix(vec3(0.62,0.72,0.86),vec3(1.0),hemi)*2.4;
-            vec3 grnd=vec3(0.10,0.09,0.07)*(1.0-hemi);
+            vec3 sky=ambientColor*mix(vec3(0.62,0.72,0.86),vec3(1.0),hemi)*1.15;
+            vec3 grnd=vec3(0.055,0.050,0.043)*(1.0-hemi);
             // wrap term: a soft fill from the sky so surfaces facing away from
             // the sun still read instead of crushing to black.
             float wrap = max(dot(N, vec3(0.0,1.0,0.0))*0.5+0.5, 0.0);
-            vec3 ambient=(sky+grnd)*albedo*(1.0 - metal*0.6)*(0.55+0.45*wrap);
+            vec3 ambient=(sky+grnd)*albedo*(1.0 - metal*0.6)*(0.42+0.42*wrap);
             // crude ambient specular for metals so they don't go black
-            vec3 ambSpec = F0 * (0.15 + hemi*0.25);
+            vec3 ambSpec = F0 * (0.08 + hemi*0.14);
 
             // flashlight cone (smooth, distance attenuated)
             vec3 spotlight=vec3(0.);
@@ -258,7 +313,8 @@ void Game::init(int width, int height, bool mobileMode) {
                     float d=length(FragPos-flashPos);
                     float att=1.0/(1.0+0.01*d+0.0006*d*d);
                     float sl=max(dot(N,-toFrag),0.0);
-                    spotlight=vec3(1.0,0.95,0.86)*att*flashIntensity*cone*(0.35+0.65*sl)*1.6;
+                    float fsh = flashShadowFactor(FragPosFlash, sl);
+                    spotlight=vec3(1.0,0.95,0.86)*att*flashIntensity*cone*(0.28+0.72*sl)*(0.10+0.90*fsh)*3.0;
                 }
             }
 
@@ -267,10 +323,12 @@ void Game::init(int width, int height, bool mobileMode) {
             // distance + value-noise volumetric-ish fog
             float dist=length(viewPos-FragPos);
             float baseFog=clamp((dist-fogStart)/max(0.001,(fogEnd-fogStart)),0.,1.);
-            float n=valueNoise(FragPos.xz*0.016+vec2(time*0.01))*0.15;
-            float fogAmount=clamp(baseFog*fogDensity + n*fogDensity*0.35,0.,1.);
+            baseFog = 1.0 - exp(-baseFog * baseFog * max(fogDensity, 0.05) * 2.8);
+            float heightFog=clamp((2.6-FragPos.y)*0.08,0.,0.22) * clamp(fogDensity,0.,2.8);
+            float n=(valueNoise(FragPos.xz*0.026+vec2(time*0.018))-0.35)*0.32;
+            float fogAmount=clamp(baseFog + heightFog + n*fogDensity,0.,1.);
             vec3 fogLin=pow(max(fogColor,vec3(0.)),vec3(2.2));
-            color=mix(color,fogLin,fogAmount*0.85);
+            color=mix(color,fogLin,fogAmount*0.96);
 
             // HDR -> ACES tonemap -> gamma (exposure lifts the moody mid-tones)
             color = ACES(color * 1.7);
@@ -415,6 +473,7 @@ void Game::init(int width, int height, bool mobileMode) {
 
     // Initialise the shadow map (graceful fallback handled in shader if absent).
     shadowMap.init(2048);
+    flashShadowMap.init(1024);
 
     std::string vertBill = R"glsl(
         layout(location=0)in vec3 aPos; layout(location=2)in vec2 aTexCoord;
@@ -443,6 +502,7 @@ void Game::init(int width, int height, bool mobileMode) {
     // High-detail procedural materials (multi-octave fbm, mipmapped + aniso).
     grassTexture.generateMaterial(512, 512, 0); // mossy ground
     woodTexture.generateMaterial(512, 512, 1);  // weathered planks
+    pathTexture.generateNoise(256, 256, false); // damp dirt / footpaths
     stoneTexture.generateMaterial(512, 512, 2); // stone / rock
     barkTexture.generateMaterial(256, 512, 3);  // tree bark
 
@@ -453,13 +513,34 @@ void Game::init(int width, int height, bool mobileMode) {
     generateCabin(cabinMesh); cabinMesh.upload();
     generateTree(treeMesh); treeMesh.upload();
 
-    // Precompute forest
+    // Precompute forest. Keep roads, village yards and quest landmarks readable
+    // instead of letting random trees block the map layout.
     lcg_seed = 12345;
     treePositions.clear(); treeScales.clear();
-    for(int i = 0; i < 420; ++i) {
+    const Vec3 roadA[] = {
+        {0,0,5}, {-8,0,-18}, {-18,0,-38}, {-22,0,-50}, {-22,0,-50}, {-36,0,-62},
+        {-22,0,-50}, {-10,0,-62}, {-22,0,-50}, {-42,0,-36}, {-22,0,-50}, {6,0,-44},
+        {0,0,5}, {12,0,78}, {-22,0,-50}, {-58,0,-28}, {0,0,5}, {42,0,38}
+    };
+    const Vec3 protectedPoints[] = {
+        {0,0,0}, {-22,0,-50}, {-36,0,-62}, {-10,0,-62}, {-42,0,-36}, {6,0,-44},
+        {12,0,78}, {-58,0,-28}, {42,0,38}
+    };
+    auto isMapClearing = [&](float x, float z) {
+        for (size_t i = 0; i + 1 < sizeof(roadA) / sizeof(roadA[0]); i += 2) {
+            if (distancePointToSegmentXZ(x, z, roadA[i], roadA[i + 1]) < 7.0f) return true;
+        }
+        for (const Vec3& p : protectedPoints) {
+            float dx = x - p.x;
+            float dz = z - p.z;
+            if (std::sqrt(dx * dx + dz * dz) < 10.0f) return true;
+        }
+        return false;
+    };
+    for(int i = 0; i < 560 && treePositions.size() < 420; ++i) {
         float x = randFloat()*260 - 130;
         float z = randFloat()*260 - 130;
-        if (sqrt(x*x + z*z) < 18) continue;
+        if (isMapClearing(x, z)) continue;
         treePositions.push_back({x, getTerrainHeight(x,z), z});
         treeScales.push_back(0.65f + randFloat()*0.7f);
     }
@@ -516,6 +597,7 @@ void Game::init(int width, int height, bool mobileMode) {
 
     // Try loading existing progress if available
     loadProgress();
+    menuSelection = SaveSystem::hasSaveGame() ? 0 : 1;
 
     state = STATE_MENU;
     resetPlayer();
@@ -549,33 +631,57 @@ void Game::resetPlayer() {
 void Game::generateVillage() {
     villageObjects.clear();
 
-    // Main village houses
-    villageObjects.push_back({{-48, getTerrainHeight(-48,-62), -62}, 0, 1.0f});
-    villageObjects.push_back({{52, getTerrainHeight(52,-58), -58}, 0, 0.95f});
-    villageObjects.push_back({{-35, getTerrainHeight(-35,45), 45}, 0, 0.85f});
-
-    // Rocks
-    for(int i=0; i<9; i++) {
-        float x = randFloat()*180-90;
-        float z = randFloat()*180-90;
-        if (fabs(x) < 25 && fabs(z) < 25) continue;
-        villageObjects.push_back({{x, getTerrainHeight(x,z), z}, 1, 0.7f + randFloat()*0.6f});
+    // A compact, readable village around the well instead of scattered houses.
+    // Every door faces the village square / main paths.
+    const Vec3 houses[] = {
+        {-36.0f, 0.0f, -62.0f},
+        {-10.0f, 0.0f, -62.0f},
+        {-42.0f, 0.0f, -36.0f},
+        {  6.0f, 0.0f, -44.0f}
+    };
+    const float scales[] = {1.0f, 0.95f, 0.9f, 0.85f};
+    for (int i = 0; i < 4; ++i) {
+        float x = houses[i].x;
+        float z = houses[i].z;
+        villageObjects.push_back({{x, getTerrainHeight(x,z), z}, 0, scales[i]});
     }
 
-    // Fences around village
-    villageObjects.push_back({{-55, getTerrainHeight(-55,-45), -45}, 2, 1.0f});
-    villageObjects.push_back({{38, getTerrainHeight(38,-42), -42}, 2, 1.0f});
+    // Rocks form small landmarks/quarry areas and no longer clutter doors/roads.
+    const Vec3 rocks[] = {
+        {-76,0,-20}, {-68,0,-10}, {-58,0,-4}, {-88,0,-52},
+        { 34,0, 52}, { 48,0, 40}, { 58,0, 30}, { 76,0, 68},
+        {-96,0, 72}, { 84,0,-84}
+    };
+    for (int i = 0; i < 10; ++i) {
+        float x = rocks[i].x;
+        float z = rocks[i].z;
+        villageObjects.push_back({{x, getTerrainHeight(x,z), z}, 1, 0.75f + 0.08f * (i % 4)});
+    }
+
+    // Low fence pieces mark the square but leave obvious gaps for paths.
+    villageObjects.push_back({{-36, getTerrainHeight(-36,-48), -48}, 2, 1.0f});
+    villageObjects.push_back({{-8,  getTerrainHeight(-8,-50),  -50}, 2, 1.0f});
+    villageObjects.push_back({{-52, getTerrainHeight(-52,-28), -28}, 2, 1.0f});
 }
 
 void Game::buildColliders() {
     aabbColliders.clear();
     circleColliders.clear();
 
-    // Cabin: 12x10 footprint, 6.2 high
-    aabbColliders.push_back({ Vec3(-5.8f, 0.0f, -4.8f), Vec3(5.8f, 6.2f, 4.8f) });
+    // Cabin wall colliders with an open front doorway.
+    // The old single solid box blocked the visible door; split walls fix that.
+    addAabb(aabbColliders, Vec3(0.0f, 3.0f, -5.0f), Vec3(6.0f, 3.0f, 0.25f));
+    addAabb(aabbColliders, Vec3(-6.0f, 3.0f, 0.0f), Vec3(0.25f, 3.0f, 5.0f));
+    addAabb(aabbColliders, Vec3( 6.0f, 3.0f, 0.0f), Vec3(0.25f, 3.0f, 5.0f));
+    addAabb(aabbColliders, Vec3(-3.75f, 3.0f, 5.0f), Vec3(2.25f, 3.0f, 0.25f));
+    addAabb(aabbColliders, Vec3( 3.75f, 3.0f, 5.0f), Vec3(2.25f, 3.0f, 0.25f));
+
+    // Furniture inside the cabin should still be physical, but not the doorway.
+    addAabb(aabbColliders, Vec3(-3.5f, 0.95f, -3.0f), Vec3(2.3f, 0.95f, 1.55f));
+    addAabb(aabbColliders, Vec3( 4.0f, 0.95f, -3.0f), Vec3(1.3f, 0.95f, 1.3f));
 
     // Well
-    Vec3 wellPos = {-20.0f, getTerrainHeight(-20.0f, -50.0f), -50.0f};
+    Vec3 wellPos = {-22.0f, getTerrainHeight(-22.0f, -50.0f), -50.0f};
     circleColliders.push_back({ wellPos, 3.0f });
 
     // Car
@@ -585,13 +691,23 @@ void Game::buildColliders() {
     // Village houses, fences and rocks
     for (const auto& obj : villageObjects) {
         if (obj.type == 0) {
-            // House body: 7.0 x 5.5 x 8.5, add a little margin
-            aabbColliders.push_back({ obj.pos + Vec3(-3.6f, 0.0f, -4.4f), obj.pos + Vec3(3.6f, 5.7f, 4.4f) });
+            // House wall colliders also leave the front doorway open.
+            float s = obj.scale;
+            Vec3 p = obj.pos;
+            auto hc = [&](float cx, float cy, float cz, float hx, float hy, float hz) {
+                addAabb(aabbColliders,
+                        p + Vec3(cx * s, cy * s, cz * s),
+                        Vec3(hx * s, hy * s, hz * s));
+            };
+            hc( 0.0f, 2.75f, -4.25f, 3.5f, 2.75f, 0.25f); // back wall
+            hc(-3.5f, 2.75f,  0.0f, 0.25f, 2.75f, 4.25f); // left wall
+            hc( 3.5f, 2.75f,  0.0f, 0.25f, 2.75f, 4.25f); // right wall
+            hc(-2.55f,2.75f,  4.25f, 0.95f, 2.75f, 0.25f); // front left of door
+            hc( 2.55f,2.75f,  4.25f, 0.95f, 2.75f, 0.25f); // front right of door
+            // No low collider above the doorway: player can pass cleanly through.
         } else if (obj.type == 1) {
-            // Rocks
             circleColliders.push_back({ obj.pos, 1.5f * obj.scale });
         } else if (obj.type == 2) {
-            // Fence segment: ~12.0 x 0.2 x 1.6
             aabbColliders.push_back({ obj.pos + Vec3(-6.2f, 0.0f, -0.2f), obj.pos + Vec3(6.2f, 1.7f, 0.2f) });
         }
     }
@@ -787,46 +903,55 @@ void Game::renderGameOver() {
     float txt[4] = {0.75f, 0.72f, 0.68f, 1.0f};
     ui.drawText(loc.tr("gameover.text", "Something in the mist found you.\nTry to stay farther from the shadows."),
                 screenWidth*0.18f, screenHeight*0.55f, 1.5f, txt);
-    float pr[4] = {0.6f, 0.62f, 0.58f, 0.85f + sin(stateTimer*2.5f)*0.15f};
+    float pr[4] = {0.6f, 0.62f, 0.58f, 0.85f + sinf(stateTimer*2.5f)*0.15f};
     ui.drawText(loc.tr("gameover.restart", "Press ACTION to return to menu"), screenWidth*0.18f, screenHeight*0.82f, 1.35f, pr);
 }
 
 void Game::spawnCollectibles() {
-    lcg_seed = 987654321;
     woodLogs.clear(); flowers.clear(); stones.clear();
 
-    woodLogs = {
-        {{14,0.4f,-9},false,"log"},
-        {{-16,0.4f,14},false,"log"},
-        {{11,0.4f,18},false,"log"}
+    auto onGround = [](float x, float z, float lift) {
+        return Vec3(x, getTerrainHeight(x, z) + lift, z);
     };
 
-    for(int i=0; i<16; i++) {
-        float x = randFloat()*200-100;
-        float z = randFloat()*200-100;
-        flowers.push_back({{x,getTerrainHeight(x,z)+0.2f,z},false,"flower"});
-    }
-    for(int i=0; i<8; i++) {
-        float x = randFloat()*170-85;
-        float z = randFloat()*170-85;
-        stones.push_back({{x,getTerrainHeight(x,z)+0.1f,z},false,"stone"});
+    // Hand-placed pickups make the map learnable: wood near the cabin trail,
+    // flowers around the village meadow, stones at the western quarry.
+    woodLogs = {
+        {onGround(18.0f, 16.0f, 0.35f), false, "log"},
+        {onGround(-14.0f, 24.0f, 0.35f), false, "log"},
+        {onGround(30.0f, 5.0f, 0.35f), false, "log"}
+    };
+
+    const Vec3 flowerSpots[] = {
+        {-30,0,-44}, {-26,0,-58}, {-18,0,-66}, {-12,0,-50},
+        {-4,0,-56}, {-38,0,-50}, {-45,0,-42}, {0,0,-38},
+        {-28,0,-34}, {-16,0,-34}, {-34,0,-70}, {-6,0,-72}
+    };
+    for (const Vec3& p : flowerSpots) {
+        flowers.push_back({onGround(p.x, p.z, 0.2f), false, "flower"});
     }
 
-    oldTool = {{-58, getTerrainHeight(-58,-28)+0.3f, -28}, false, "tool"};
-    rareHerb = {{42, getTerrainHeight(42,38)+0.25f, 38}, false, "herb"};
+    const Vec3 stoneSpots[] = {
+        {-76,0,-20}, {-70,0,-12}, {-62,0,-5}, {-84,0,-32},
+        {-92,0,-48}, {-58,0,-18}, {-68,0,-40}, {-80,0,-4}
+    };
+    for (const Vec3& p : stoneSpots) {
+        stones.push_back({onGround(p.x, p.z, 0.12f), false, "stone"});
+    }
+
+    oldTool = {onGround(-58.0f, -28.0f, 0.3f), false, "tool"};
+    rareHerb = {onGround(42.0f, 38.0f, 0.25f), false, "herb"};
 }
 
 void Game::setupDaySettings() {
     state = STATE_INTRO; stateTimer = 0; fadeAlpha = 1.0f;
-    wellRepaired = false; logsCollected = 0; flowersCollected = 0;
-    stonesCollected = 0; toolFound = false; herbFound = false;
     flashlightOn = false; flashlightIntensity = 0;
 
     float dayProgress = (currentDay - 1) / 8.0f;
 
-    fogDensity = 0.6f + dayProgress * 1.45f;
-    fogStart = (280.0f - dayProgress * 160.0f) * settings.viewDistance;
-    fogEnd = (780.0f - dayProgress * 320.0f) * settings.viewDistance;
+    fogDensity = 0.85f + dayProgress * 1.75f;
+    fogStart = (42.0f - dayProgress * 26.0f) * settings.viewDistance;
+    fogEnd = (210.0f - dayProgress * 118.0f) * settings.viewDistance;
     fatigue = dayProgress * 0.58f;
 
     if (currentDay == 1) {
@@ -977,6 +1102,7 @@ void Game::update(float dt) {
         if (actionPressed) {
             actionPressed = false;
             currentDay = 1;
+            resetProgressData(*this);
             setupDaySettings();
             resetPlayer();
             state = STATE_INTRO;
@@ -1030,7 +1156,7 @@ void Game::update(float dt) {
         flashlightOn = !flashlightOn;
         flashlightTogglePressed = false;
     }
-    flashlightIntensity = flashlightOn ? 0.85f : 0;
+    flashlightIntensity = flashlightOn ? 1.45f : 0;
 
     // Time of day and weather progression
     timeOfDay += dt * timeScale;
@@ -1048,7 +1174,7 @@ void Game::update(float dt) {
         if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 2) {
-        float dw = sqrt((camera.position.x+20)*(camera.position.x+20)+(camera.position.z+50)*(camera.position.z+50));
+        float dw = sqrt((camera.position.x+22)*(camera.position.x+22)+(camera.position.z+50)*(camera.position.z+50));
         if (!wellRepaired) {
             objectiveText = loc.tr("d2.check", "Inspect the well near the village.");
             if (dw < 5.5f && interact) { wellRepaired = true; audio.playSound("repair"); saveProgress(); }
@@ -1133,6 +1259,33 @@ void Game::renderSceneGeometry(Shader& sh, bool depthOnly) {
     if (!depthOnly) sh.setFloat("matRoughness", 0.92f), sh.setFloat("matMetallic", 0.0f);
     terrainMesh.draw();
 
+    // Readable footpath network / map layout. Paths connect cabin, village,
+    // car and quest landmarks so navigation is clear even in fog.
+    auto drawPath = [&](const Vec3& a, const Vec3& b, float width) {
+        Vec3 mid((a.x + b.x) * 0.5f, 0.0f, (a.z + b.z) * 0.5f);
+        float dx = b.x - a.x;
+        float dz = b.z - a.z;
+        float len = std::sqrt(dx * dx + dz * dz);
+        if (len < 0.1f) return;
+        mid.y = getTerrainHeight(mid.x, mid.z) + 0.04f;
+        float angle = std::atan2(dx, dz);
+        Mat4 pm = Mat4::translation(mid) * Mat4::rotationY(angle) * Mat4::scaling({width / 3.5f, 1.0f, len / 18.0f});
+        sh.setMat4("model", pm);
+        pathMesh.draw();
+    };
+    setTex(pathTexture, 1);
+    if (!depthOnly) sh.setFloat("matRoughness", 0.96f), sh.setFloat("matMetallic", 0.0f);
+    drawPath({0,0,5}, {-8,0,-18}, 4.2f);
+    drawPath({-8,0,-18}, {-18,0,-38}, 4.0f);
+    drawPath({-18,0,-38}, {-22,0,-50}, 4.8f);
+    drawPath({-22,0,-50}, {-36,0,-62}, 3.2f);
+    drawPath({-22,0,-50}, {-10,0,-62}, 3.2f);
+    drawPath({-22,0,-50}, {-42,0,-36}, 3.0f);
+    drawPath({-22,0,-50}, {6,0,-44}, 3.0f);
+    drawPath({0,0,5}, {12,0,78}, 3.4f);
+    drawPath({-22,0,-50}, {-58,0,-28}, 2.7f);
+    drawPath({0,0,5}, {42,0,38}, 2.5f);
+
     // Cabin
     sh.setMat4("model", Mat4::identity());
     setTex(woodTexture, 1);
@@ -1151,7 +1304,7 @@ void Game::renderSceneGeometry(Shader& sh, bool depthOnly) {
     }
 
     // Well
-    Vec3 wellPos = {-20, getTerrainHeight(-20,-50), -50};
+    Vec3 wellPos = {-22, getTerrainHeight(-22,-50), -50};
     if (frustum.isSphereInside(wellPos, 6.0f)) {
         setTex(stoneTexture, 1);
         if (!depthOnly) sh.setFloat("matRoughness", 0.85f);
@@ -1261,6 +1414,34 @@ void Game::renderDepthPass() {
     shadowMap.endRender(screenWidth, screenHeight);
 }
 
+void Game::renderFlashlightDepthPass() {
+    // Spot shadow map from the player's flashlight. This makes the flashlight
+    // cast shadows from walls, trees and objects inside its cone.
+    if (flashlightIntensity <= 0.0f) {
+        flashLightSpaceMatrix = Mat4::identity();
+        return;
+    }
+
+    Vec3 eye = camera.position;
+    Vec3 target = camera.position + camera.front * 45.0f;
+    Mat4 lightView = Mat4::lookAt(eye, target, camera.up);
+    Mat4 lightProj = Mat4::perspective(62.0f * M_PI / 180.0f, 1.0f, 0.25f, 95.0f);
+    flashLightSpaceMatrix = lightProj * lightView;
+
+    flashShadowMap.beginRender();
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+    depthShader.use();
+    depthShader.setMat4("lightSpaceMatrix", flashLightSpaceMatrix);
+    renderSceneGeometry(depthShader, true);
+
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    flashShadowMap.endRender(screenWidth, screenHeight);
+}
+
 void Game::render() {
     glClearColor(fogColor.x, fogColor.y, fogColor.z, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1280,7 +1461,7 @@ void Game::render() {
         ui.drawRect(0,0,screenWidth,screenHeight,blk);
         float tc[4]={0.9f,0.92f,0.87f,1};
         ui.drawText(diaryText, screenWidth*0.08f, screenHeight*0.18f, 1.48f, tc);
-        float pr[4]={0.7f,0.74f,0.68f,0.82f + sin(stateTimer*3.1f)*0.2f};
+        float pr[4]={0.7f,0.74f,0.68f,0.82f + sinf(stateTimer*3.1f)*0.2f};
         ui.drawText(loc.tr("intro.prompt","Press ACTION to continue..."), screenWidth*0.08f, screenHeight*0.82f, 1.35f, pr);
         return;
     }
@@ -1309,8 +1490,9 @@ void Game::render() {
     Mat4 vpMat = projMat * viewMat;
     frustum.extract(vpMat);
 
-    // --- Pass 1: shadow depth map from the sun ---
+    // --- Pass 1: shadow depth maps from sun and flashlight ---
     renderDepthPass();
+    renderFlashlightDepthPass();
 
     // --- Sky: procedural dome with moving sun, moon, stars behind everything ---
     glDisable(GL_DEPTH_TEST);
@@ -1354,11 +1536,15 @@ void Game::render() {
     mainShader.setVec3("flashPos", camera.position);
     mainShader.setVec3("flashDir", camera.front);
     mainShader.setFloat("flashIntensity", flashlightIntensity);
+    mainShader.setInt("useFlashShadow", flashlightIntensity > 0.0f ? 1 : 0);
 
-    // Bind the shadow map produced in the depth pass for the lit pass.
+    // Bind the shadow maps produced in the depth passes for the lit pass.
     shadowMap.bindForReading(4);
     mainShader.setInt("shadowMap", 4);
+    flashShadowMap.bindForReading(5);
+    mainShader.setInt("flashShadowMap", 5);
     mainShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+    mainShader.setMat4("flashLightSpaceMatrix", flashLightSpaceMatrix);
 
     // Submit all opaque world geometry through the shared path (textured, lit).
     renderSceneGeometry(mainShader, false);
@@ -1447,8 +1633,10 @@ void Game::cleanup() {
     skyShader.cleanup();
     skyQuad.cleanup();
     shadowMap.cleanup();
+    flashShadowMap.cleanup();
     grassTexture.cleanup();
     woodTexture.cleanup();
+    pathTexture.cleanup();
     stoneTexture.cleanup();
     barkTexture.cleanup();
     terrainMesh.cleanup();
@@ -1563,13 +1751,18 @@ void Game::setupWeather() {
 
     // Apply weather modifiers to fog
     if (weather == WEATHER_FOGGY) {
-        fogDensity *= 1.4f;
-        fogStart *= 0.7f;
+        fogDensity *= 1.75f;
+        fogStart *= 0.45f;
+        fogEnd *= 0.78f;
     } else if (weather == WEATHER_RAIN) {
-        fogDensity *= 1.15f;
+        fogDensity *= 1.35f;
+        fogStart *= 0.75f;
+        fogEnd *= 0.88f;
         baseFogColor = Vec3::lerp(baseFogColor, Vec3(0.5f,0.55f,0.6f), 0.3f);
     } else if (weather == WEATHER_SNOW) {
-        fogDensity *= 1.25f;
+        fogDensity *= 1.45f;
+        fogStart *= 0.70f;
+        fogEnd *= 0.86f;
         baseFogColor = Vec3::lerp(baseFogColor, Vec3(0.85f,0.88f,0.92f), 0.4f);
     }
 }
@@ -1738,6 +1931,9 @@ void Game::updateMenu(float dt) {
             case 0: // Continue
                 if (SaveSystem::hasSaveGame()) {
                     loadProgress();
+                } else {
+                    currentDay = 1;
+                    resetProgressData(*this);
                 }
                 setupDaySettings();
                 resetPlayer();
@@ -1748,6 +1944,7 @@ void Game::updateMenu(float dt) {
                 break;
             case 1: // New Game
                 currentDay = 1;
+                resetProgressData(*this);
                 setupDaySettings();
                 resetPlayer();
                 syncCollectiblesWithSave();

@@ -147,19 +147,139 @@ void generateCone(Mesh& mesh, float baseRadius, float height, int slices, const 
     }
 }
 
-float getTerrainHeight(float x, float z) {
-    // Spooky valley math: center is flat, sides rise steeply
-    float baseNoise = std::sin(x * 0.06f) * std::cos(z * 0.06f) * 3.5f + std::sin(x * 0.15f) * 0.5f;
-    
-    // Smooth valley flat path in the middle (from x = -20 to x = 20)
-    float edgeDist = std::abs(x);
-    float valleyWalls = 0.0f;
-    if (edgeDist > 30.0f) {
-        float factor = (edgeDist - 30.0f);
-        valleyWalls = factor * factor * 0.015f + factor * 0.35f;
+static float terrainClamp01(float v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+static float terrainSmoothstep(float edge0, float edge1, float x) {
+    float t = terrainClamp01((x - edge0) / (edge1 - edge0));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static float terrainHash(int x, int z) {
+    int n = x * 374761393 + z * 668265263;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return (float)((n ^ (n >> 16)) & 0x7fffffff) / (float)0x7fffffff;
+}
+
+static float terrainValueNoise(float x, float z) {
+    int ix = (int)std::floor(x);
+    int iz = (int)std::floor(z);
+    float fx = x - (float)ix;
+    float fz = z - (float)iz;
+    fx = fx * fx * (3.0f - 2.0f * fx);
+    fz = fz * fz * (3.0f - 2.0f * fz);
+
+    float a = terrainHash(ix,     iz);
+    float b = terrainHash(ix + 1, iz);
+    float c = terrainHash(ix,     iz + 1);
+    float d = terrainHash(ix + 1, iz + 1);
+    float ab = a + (b - a) * fx;
+    float cd = c + (d - c) * fx;
+    return ab + (cd - ab) * fz;
+}
+
+static float terrainFbm(float x, float z, int octaves) {
+    float sum = 0.0f;
+    float amp = 0.5f;
+    float freq = 1.0f;
+    float norm = 0.0f;
+    for (int i = 0; i < octaves; ++i) {
+        sum += terrainValueNoise(x * freq, z * freq) * amp;
+        norm += amp;
+        amp *= 0.5f;
+        freq *= 2.0f;
     }
-    
-    return baseNoise + valleyWalls;
+    return norm > 0.0f ? sum / norm : 0.0f;
+}
+
+static float terrainDistanceToSegment(float px, float pz, float ax, float az, float bx, float bz) {
+    float abx = bx - ax;
+    float abz = bz - az;
+    float apx = px - ax;
+    float apz = pz - az;
+    float len2 = abx * abx + abz * abz;
+    if (len2 < 0.0001f) {
+        float dx = px - ax;
+        float dz = pz - az;
+        return std::sqrt(dx * dx + dz * dz);
+    }
+    float t = terrainClamp01((apx * abx + apz * abz) / len2);
+    float cx = ax + abx * t;
+    float cz = az + abz * t;
+    float dx = px - cx;
+    float dz = pz - cz;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+static float terrainRoadMask(float x, float z) {
+    const float roads[][4] = {
+        {0,5, -8,-18}, {-8,-18, -18,-38}, {-18,-38, -22,-50},
+        {-22,-50, -36,-62}, {-22,-50, -10,-62}, {-22,-50, -42,-36},
+        {-22,-50, 6,-44}, {0,5, 12,78}, {-22,-50, -58,-28}, {0,5, 42,38}
+    };
+
+    float mask = 0.0f;
+    for (const auto& r : roads) {
+        float d = terrainDistanceToSegment(x, z, r[0], r[1], r[2], r[3]);
+        float m = 1.0f - terrainSmoothstep(4.5f, 10.0f, d);
+        if (m > mask) mask = m;
+    }
+    return mask;
+}
+
+static float terrainClearingMask(float x, float z) {
+    const float spots[][3] = {
+        {0,0,18}, {-22,-50,28}, {-36,-62,12}, {-10,-62,12}, {-42,-36,12}, {6,-44,12},
+        {12,78,13}, {-58,-28,11}, {42,38,12}, {-76,-20,12}, {34,52,10}
+    };
+
+    float mask = 0.0f;
+    for (const auto& s : spots) {
+        float dx = x - s[0];
+        float dz = z - s[1];
+        float d = std::sqrt(dx * dx + dz * dz);
+        float m = 1.0f - terrainSmoothstep(s[2] * 0.55f, s[2], d);
+        if (m > mask) mask = m;
+    }
+    return mask;
+}
+
+float getTerrainHeight(float x, float z) {
+    // Natural rolling terrain. The old height function used x^2 valley walls,
+    // which made the whole map look like a parabola. This version is isotropic:
+    // height is driven by layered value noise + small ridges, with only the far
+    // map border raised slightly to hide the edge of the playable area.
+    float broad  = terrainFbm(x * 0.010f + 17.3f, z * 0.010f - 9.1f, 5);
+    float medium = terrainFbm(x * 0.030f - 4.0f,  z * 0.030f + 6.0f, 4);
+    float detail = terrainFbm(x * 0.085f + 2.0f,  z * 0.085f - 3.0f, 3);
+
+    float height = 0.0f;
+    height += (broad  - 0.5f) * 8.0f;   // large low hills
+    height += (medium - 0.5f) * 3.0f;   // terrain undulation
+    height += (detail - 0.5f) * 0.9f;   // surface detail
+
+    // Very soft diagonal ridges, not tied to only X or only Z.
+    height += std::sin((x + z) * 0.030f) * 0.55f;
+    height += std::sin((x - z) * 0.024f + 1.7f) * 0.45f;
+
+    // Flatten important gameplay spaces and roads so objects do not float and
+    // navigation remains readable in fog. Blend, don't hard-cut.
+    float mask = terrainClearingMask(x, z);
+    float road = terrainRoadMask(x, z) * 0.85f;
+    if (road > mask) mask = road;
+    float flatTarget = std::sin(x * 0.018f) * 0.15f + std::cos(z * 0.017f) * 0.15f;
+    height = height * (1.0f - mask) + flatTarget * mask;
+
+    // Border hills only near the very outside of the generated 520x520 map.
+    // This gives a natural boundary without turning the whole map into a bowl.
+    float edge = std::fmax(std::fabs(x), std::fabs(z));
+    float border = terrainSmoothstep(205.0f, 255.0f, edge);
+    height += border * border * 8.0f;
+
+    return height;
 }
 
 void generateTerrain(Mesh& mesh, float width, float depth, int subdivsX, int subdivsZ) {
@@ -339,19 +459,34 @@ void generateHouse(Mesh& mesh, bool hasChimney) {
     float roof[4] = {0.35f, 0.18f, 0.12f, 1.0f};
     float stone[4] = {0.48f, 0.46f, 0.42f, 1.0f};
 
-    // Main body
-    generateBox(mesh, Vec3(7.0f, 5.5f, 8.5f), Vec3(0, 2.8f, 0), wood, {2.5f, 2.0f});
+    // Floor and separate walls. The front wall has a real doorway, matching
+    // the collision layout so the player can walk through doors naturally.
+    generateBox(mesh, Vec3(7.0f, 0.18f, 8.5f), Vec3(0, 0.09f, 0), wood, {2.4f, 2.4f});
+    generateBox(mesh, Vec3(7.0f, 5.5f, 0.35f), Vec3(0, 2.75f, -4.25f), wood, {2.5f, 2.0f});
+    generateBox(mesh, Vec3(0.35f, 5.5f, 8.5f), Vec3(-3.5f, 2.75f, 0), wood, {2.5f, 2.0f});
+    generateBox(mesh, Vec3(0.35f, 5.5f, 8.5f), Vec3( 3.5f, 2.75f, 0), wood, {2.5f, 2.0f});
+
+    // Front wall split around door opening (about 1.8m wide).
+    generateBox(mesh, Vec3(1.9f, 5.5f, 0.35f), Vec3(-2.55f, 2.75f, 4.25f), wood, {0.8f, 2.0f});
+    generateBox(mesh, Vec3(1.9f, 5.5f, 0.35f), Vec3( 2.55f, 2.75f, 4.25f), wood, {0.8f, 2.0f});
+    generateBox(mesh, Vec3(1.8f, 1.6f, 0.35f), Vec3(0, 4.7f, 4.25f), wood, {0.8f, 0.7f});
+
+    // Door frame / lintel only, no blocking door slab.
+    generateBox(mesh, Vec3(0.18f, 3.2f, 0.24f), Vec3(-1.0f, 1.7f, 4.45f), darkWood);
+    generateBox(mesh, Vec3(0.18f, 3.2f, 0.24f), Vec3( 1.0f, 1.7f, 4.45f), darkWood);
+    generateBox(mesh, Vec3(2.2f, 0.18f, 0.24f), Vec3(0.0f, 3.25f, 4.45f), darkWood);
 
     // Roof
     generateBox(mesh, Vec3(8.2f, 0.6f, 9.8f), Vec3(0, 6.0f, 0), roof, {3.0f, 2.5f});
 
-    // Door
-    generateBox(mesh, Vec3(1.4f, 3.2f, 0.3f), Vec3(0, 1.8f, 4.3f), darkWood);
-
     // Windows
     float win[4] = {0.65f, 0.75f, 0.85f, 1.0f};
-    generateBox(mesh, Vec3(1.6f, 1.8f, 0.25f), Vec3(-2.2f, 3.2f, 4.3f), win);
-    generateBox(mesh, Vec3(1.6f, 1.8f, 0.25f), Vec3(2.2f, 3.2f, 4.3f), win);
+    generateBox(mesh, Vec3(1.2f, 1.5f, 0.25f), Vec3(-2.25f, 3.05f, 4.45f), win);
+    generateBox(mesh, Vec3(1.2f, 1.5f, 0.25f), Vec3( 2.25f, 3.05f, 4.45f), win);
+
+    // Small interior marker/floor detail so entered houses do not feel like empty blocks.
+    float floorMat[4] = {0.20f, 0.15f, 0.10f, 1.0f};
+    generateBox(mesh, Vec3(2.0f, 0.12f, 1.1f), Vec3(0.0f, 0.22f, 2.0f), floorMat);
 
     if (hasChimney) {
         generateBox(mesh, Vec3(1.3f, 2.8f, 1.3f), Vec3(2.4f, 6.8f, -2.8f), stone);

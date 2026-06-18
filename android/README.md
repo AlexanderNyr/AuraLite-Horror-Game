@@ -21,7 +21,10 @@ The project is now set up to build an Android APK with SDL2.
 
 ```bash
 cd android
+# If you add/use a Gradle wrapper:
 ./gradlew assembleDebug
+# Or with a system Gradle installation:
+gradle assembleDebug
 ```
 
 The first build will:
@@ -30,3 +33,6 @@ The first build will:
 3. Produce `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 If you want to use a pre-downloaded SDL2 checkout instead of FetchContent, place it at `third_party/SDL2/`; CMake will prefer that local copy.
+
+
+Note: the repository may not include Gradle wrapper files. In that case either open `android/` in Android Studio, run `gradle wrapper`, or use an installed `gradle` command.

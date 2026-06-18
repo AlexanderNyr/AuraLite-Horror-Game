@@ -72,7 +72,7 @@ if(ANDROID)
         SDL2
     )
 else()
-    message(STATUS "Building AnxietyHorror for desktop / OpenGL 4.6")
+    message(STATUS "Building AnxietyHorror for desktop / OpenGL 4.5")
 
     add_executable(AnxietyHorror
         ${GAME_SOURCES}

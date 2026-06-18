@@ -43,3 +43,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Runtime save/settings files
+anxietyhorror_save.dat
+anxietyhorror_settings.dat
+.sudo_as_admin_successful

@@ -86,9 +86,12 @@ public:
     Texture barkTexture;
 
     ShadowMap shadowMap;
+    ShadowMap flashShadowMap;
     Mat4 lightSpaceMatrix;
+    Mat4 flashLightSpaceMatrix;
     Mesh skyQuad;             // full-screen triangle for the sky pass
-    void renderDepthPass();   // first pass: scene depth from the light
+    void renderDepthPass();   // first pass: scene depth from the sun/moon
+    void renderFlashlightDepthPass(); // optional spot-shadow depth from flashlight
     void renderSceneGeometry(Shader& sh, bool depthOnly); // shared geometry submission
 
     Mesh terrainMesh;
