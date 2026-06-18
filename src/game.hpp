@@ -77,9 +77,19 @@ public:
 
     Shader mainShader;
     Shader billboardShader;
+    Shader depthShader;       // renders scene depth from the sun for shadow mapping
+    Shader skyShader;         // full-screen procedural sky gradient + sun
     Texture grassTexture;
     Texture woodTexture;
     Texture pathTexture;
+    Texture stoneTexture;
+    Texture barkTexture;
+
+    ShadowMap shadowMap;
+    Mat4 lightSpaceMatrix;
+    Mesh skyQuad;             // full-screen triangle for the sky pass
+    void renderDepthPass();   // first pass: scene depth from the light
+    void renderSceneGeometry(Shader& sh, bool depthOnly); // shared geometry submission
 
     Mesh terrainMesh;
     Mesh cabinMesh;
@@ -127,6 +137,15 @@ public:
     Vec3 baseAmbientColor;
     Vec3 baseDirLightColor;
     Vec3 baseFogColor;
+
+    // Celestial bodies driven by timeOfDay (computed in applyTimeOfDay)
+    Vec3 sunDir   = {0.0f,-1.0f,0.0f}; // direction the sunlight travels
+    Vec3 moonDir  = {0.0f, 1.0f,0.0f};
+    float sunHeight  = 0.0f;           // sin of elevation, [-1..1]
+    float moonHeight = 0.0f;
+    float nightFactor = 0.0f;          // 0 = day, 1 = full night
+    Vec3 zenithColor;                  // top of the sky dome
+    Vec3 horizonColor;                 // bottom of the sky dome
     float fogStart = 300.0f;
     float fogEnd = 800.0f;
     float fogDensity = 1.0f;

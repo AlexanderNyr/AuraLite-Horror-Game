@@ -120,6 +120,19 @@ struct Mat4 {
         return res;
     }
 
+    static Mat4 ortho(float left, float right, float bottom, float top, float nearVal, float farVal) {
+        Mat4 res;
+        std::memset(res.m, 0, sizeof(res.m));
+        res.m[0]  = 2.0f / (right - left);
+        res.m[5]  = 2.0f / (top - bottom);
+        res.m[10] = -2.0f / (farVal - nearVal);
+        res.m[12] = -(right + left) / (right - left);
+        res.m[13] = -(top + bottom) / (top - bottom);
+        res.m[14] = -(farVal + nearVal) / (farVal - nearVal);
+        res.m[15] = 1.0f;
+        return res;
+    }
+
     static Mat4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up) {
         Vec3 f = (center - eye).normalized();
         Vec3 s = Vec3::cross(f, up).normalized();

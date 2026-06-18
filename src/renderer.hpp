@@ -96,5 +96,21 @@ struct Texture {
     GLuint id = 0;
     void generateSolid(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     void generateNoise(int width, int height, bool woodPattern = false);
+    // High-detail multi-octave procedural materials.
+    // kind: 0 = mossy ground, 1 = weathered wood, 2 = stone/rock, 3 = bark
+    void generateMaterial(int width, int height, int kind);
+    void cleanup();
+};
+
+// Directional-light shadow map (depth-only FBO) with PCF support in shaders.
+struct ShadowMap {
+    GLuint fbo = 0;
+    GLuint depthTex = 0;
+    int size = 2048;
+
+    bool init(int resolution);
+    void beginRender();   // bind FBO + set viewport + clear depth
+    void endRender(int screenW, int screenH); // restore default framebuffer/viewport
+    void bindForReading(int textureUnit) const;
     void cleanup();
 };

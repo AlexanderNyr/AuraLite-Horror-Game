@@ -112,7 +112,11 @@ void Game::init(int width, int height, bool mobileMode) {
     loc.init("lang");
     loadSettings();
 
-    // === Improved Shaders with better lighting ===
+    // ============================================================
+    //  PBR forward shader: Cook-Torrance BRDF, hemispheric IBL-ish
+    //  ambient, procedural detail-normal perturbation, PCF shadows,
+    //  height/value-noise fog and ACES filmic tonemapping.
+    // ============================================================
     std::string vert3D = R"glsl(
         layout(location = 0) in vec3 aPos;
         layout(location = 1) in vec3 aNormal;
@@ -120,23 +124,32 @@ void Game::init(int width, int height, bool mobileMode) {
         layout(location = 3) in vec4 aColor;
 
         out vec3 FragPos; out vec3 Normal; out vec2 TexCoord; out vec4 Color;
+        out vec4 FragPosLight;
         uniform mat4 model, view, projection;
+        uniform mat4 lightSpaceMatrix;
         void main() {
-            FragPos = vec3(model * vec4(aPos, 1.0));
+            vec4 wp = model * vec4(aPos, 1.0);
+            FragPos = wp.xyz;
             Normal = mat3(transpose(inverse(model))) * aNormal;
             TexCoord = aTexCoord; Color = aColor;
-            gl_Position = projection * view * model * vec4(aPos, 1.0);
+            FragPosLight = lightSpaceMatrix * wp;
+            gl_Position = projection * view * wp;
         }
     )glsl";
 
     std::string frag3D = R"glsl(
         in vec3 FragPos; in vec3 Normal; in vec2 TexCoord; in vec4 Color;
+        in vec4 FragPosLight;
         out vec4 FragColor;
 
         uniform vec3 viewPos, fogColor, ambientColor, dirLightColor, dirLightDir;
         uniform float fogStart, fogEnd, time, fogDensity;
         uniform vec3 flashPos, flashDir; uniform float flashIntensity;
         uniform sampler2D texture_diffuse; uniform int useTexture;
+        uniform float matRoughness, matMetallic;
+        uniform sampler2DShadow shadowMap;
+
+        const float PI = 3.14159265359;
 
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         float valueNoise(vec2 p){
@@ -145,50 +158,263 @@ void Game::init(int width, int height, bool mobileMode) {
             return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
         }
 
+        // Cheap procedural bump: perturb the normal using the gradient of a
+        // tiled value-noise field so flat surfaces gain micro surface detail.
+        vec3 applyDetailNormal(vec3 N, vec3 wp, float strength){
+            vec2 p = wp.xz * 1.7 + wp.y * 0.6;
+            float e = 0.35;
+            float nx = valueNoise(p + vec2(e,0.)) - valueNoise(p - vec2(e,0.));
+            float nz = valueNoise(p + vec2(0.,e)) - valueNoise(p - vec2(0.,e));
+            vec3 perturbed = normalize(N + vec3(-nx, 0.0, -nz) * strength);
+            return perturbed;
+        }
+
+        // --- Cook-Torrance terms ---
+        float DistributionGGX(vec3 N, vec3 H, float rough){
+            float a=rough*rough; float a2=a*a;
+            float NdotH=max(dot(N,H),0.0); float NdotH2=NdotH*NdotH;
+            float denom=(NdotH2*(a2-1.0)+1.0);
+            return a2/max(PI*denom*denom,1e-5);
+        }
+        float GeometrySchlickGGX(float NdotV, float rough){
+            float r=rough+1.0; float k=(r*r)/8.0;
+            return NdotV/(NdotV*(1.0-k)+k);
+        }
+        float GeometrySmith(vec3 N, vec3 V, vec3 L, float rough){
+            return GeometrySchlickGGX(max(dot(N,V),0.0),rough)*
+                   GeometrySchlickGGX(max(dot(N,L),0.0),rough);
+        }
+        vec3 fresnelSchlick(float cosT, vec3 F0){
+            return F0 + (1.0-F0)*pow(clamp(1.0-cosT,0.0,1.0),5.0);
+        }
+
+        // 3x3 PCF using hardware depth comparison.
+        float shadowFactor(vec4 fpl, float NdotL){
+            vec3 proj = fpl.xyz / fpl.w;
+            proj = proj * 0.5 + 0.5;
+            if(proj.z > 1.0) return 1.0;
+            if(proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+            float bias = max(0.0016 * (1.0 - NdotL), 0.0004);
+            float texel = 1.0/2048.0;
+            float sum = 0.0;
+            for(int x=-1;x<=1;++x)
+              for(int y=-1;y<=1;++y){
+                vec3 c = vec3(proj.xy + vec2(x,y)*texel, proj.z - bias);
+                sum += texture(shadowMap, c);
+              }
+            return sum/9.0;
+        }
+
+        // ACES filmic tonemap (Narkowicz approximation).
+        vec3 ACES(vec3 x){
+            const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+            return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.0,1.0);
+        }
+
         void main() {
             vec4 base = (useTexture!=0)? texture(texture_diffuse,TexCoord)*Color : Color;
             if(base.a<0.1) discard;
 
-            vec3 norm=normalize(Normal), viewDir=normalize(viewPos-FragPos);
             vec3 albedo=pow(max(base.rgb,vec3(0.)),vec3(2.2));
+            float rough = clamp(matRoughness, 0.05, 1.0);
+            float metal = clamp(matMetallic, 0.0, 1.0);
 
-            float hemi=norm.y*0.5+0.5;
-            vec3 sky=ambientColor*mix(vec3(0.68,0.78,0.88),vec3(1.),hemi);
-            vec3 ground=vec3(0.065,0.06,0.045)*(1.-hemi);
-            vec3 ambient=(sky+ground)*albedo;
+            vec3 N = normalize(Normal);
+            N = applyDetailNormal(N, FragPos, 0.35*(1.0-metal));
+            vec3 V = normalize(viewPos - FragPos);
+            vec3 L = normalize(-dirLightDir);
+            vec3 H = normalize(V + L);
 
-            vec3 ldir=normalize(-dirLightDir);
-            float diff=max(dot(norm,ldir)+0.08,0.);
-            vec3 diffuse=diff*dirLightColor*albedo;
+            vec3 F0 = mix(vec3(0.04), albedo, metal);
+            float NdotL = max(dot(N,L), 0.0);
 
-            vec3 hdir=normalize(ldir+viewDir);
-            float spec=pow(max(dot(norm,hdir),0.),32.)*0.14;
-            vec3 specular=spec*dirLightColor;
+            // direct sun (Cook-Torrance)
+            float NDF = DistributionGGX(N,H,rough);
+            float Geo = GeometrySmith(N,V,L,rough);
+            vec3  F   = fresnelSchlick(max(dot(H,V),0.0), F0);
+            vec3 spec = (NDF*Geo*F) / max(4.0*max(dot(N,V),0.0)*NdotL, 1e-4);
+            vec3 kd = (vec3(1.0)-F)*(1.0-metal);
+            float shadow = shadowFactor(FragPosLight, NdotL);
+            vec3 direct = (kd*albedo/PI + spec) * dirLightColor * NdotL * (0.25 + 0.75*shadow) * 3.0;
 
+            // hemispheric ambient (sky / ground IBL approximation)
+            float hemi = N.y*0.5+0.5;
+            vec3 sky=ambientColor*mix(vec3(0.62,0.72,0.86),vec3(1.0),hemi)*2.4;
+            vec3 grnd=vec3(0.10,0.09,0.07)*(1.0-hemi);
+            // wrap term: a soft fill from the sky so surfaces facing away from
+            // the sun still read instead of crushing to black.
+            float wrap = max(dot(N, vec3(0.0,1.0,0.0))*0.5+0.5, 0.0);
+            vec3 ambient=(sky+grnd)*albedo*(1.0 - metal*0.6)*(0.55+0.45*wrap);
+            // crude ambient specular for metals so they don't go black
+            vec3 ambSpec = F0 * (0.15 + hemi*0.25);
+
+            // flashlight cone (smooth, distance attenuated)
             vec3 spotlight=vec3(0.);
             if(flashIntensity>0.){
                 vec3 toFrag=normalize(FragPos-flashPos);
-                if(dot(toFrag,normalize(flashDir))>0.6){
-                    float dist=length(FragPos-flashPos);
-                    float att=1./(1.+0.015*dist);
-                    spotlight=vec3(1.,0.95,0.85)*att*flashIntensity*0.6;
+                float cd=dot(toFrag,normalize(flashDir));
+                float cone=smoothstep(0.55,0.78,cd);
+                if(cone>0.0){
+                    float d=length(FragPos-flashPos);
+                    float att=1.0/(1.0+0.01*d+0.0006*d*d);
+                    float sl=max(dot(N,-toFrag),0.0);
+                    spotlight=vec3(1.0,0.95,0.86)*att*flashIntensity*cone*(0.35+0.65*sl)*1.6;
                 }
             }
 
-            vec3 finalCol=ambient+diffuse+specular+spotlight;
+            vec3 color = ambient + ambSpec + direct + spotlight*albedo;
 
+            // distance + value-noise volumetric-ish fog
             float dist=length(viewPos-FragPos);
             float baseFog=clamp((dist-fogStart)/max(0.001,(fogEnd-fogStart)),0.,1.);
-            float noise=valueNoise(FragPos.xz*0.016+vec2(time*0.01))*0.15;
-            float fogAmount=clamp(baseFog*fogDensity + noise*fogDensity*0.35,0.,1.);
+            float n=valueNoise(FragPos.xz*0.016+vec2(time*0.01))*0.15;
+            float fogAmount=clamp(baseFog*fogDensity + n*fogDensity*0.35,0.,1.);
+            vec3 fogLin=pow(max(fogColor,vec3(0.)),vec3(2.2));
+            color=mix(color,fogLin,fogAmount*0.85);
 
-            vec3 fogged=mix(finalCol,fogColor,fogAmount*0.8);
-            fogged=pow(fogged,vec3(1./2.2));
-            FragColor=vec4(fogged,base.a);
+            // HDR -> ACES tonemap -> gamma (exposure lifts the moody mid-tones)
+            color = ACES(color * 1.7);
+            color = pow(color, vec3(1.0/2.2));
+            FragColor=vec4(color,base.a);
         }
     )glsl";
 
     mainShader.compile(vert3D, frag3D);
+
+    // Depth-only shader for the shadow pass.
+    std::string vertDepth = R"glsl(
+        layout(location=0) in vec3 aPos;
+        uniform mat4 lightSpaceMatrix, model;
+        void main(){ gl_Position = lightSpaceMatrix * model * vec4(aPos,1.0); }
+    )glsl";
+    std::string fragDepth = R"glsl(
+        void main(){}
+    )glsl";
+    depthShader.compile(vertDepth, fragDepth);
+
+    // Procedural sky: full-screen triangle, reconstructs view ray per pixel.
+    std::string vertSky = R"glsl(
+        layout(location=0) in vec3 aPos;
+        out vec2 ndc;
+        void main(){ ndc = aPos.xy; gl_Position = vec4(aPos.xy, 1.0, 1.0); }
+    )glsl";
+    std::string fragSky = R"glsl(
+        in vec2 ndc; out vec4 FragColor;
+        uniform vec3 viewDirF, viewDirR, viewDirU;
+        uniform float aspect, tanHalfFov;
+        uniform vec3 sunPosDir;   // direction TO the sun  (sky position)
+        uniform vec3 moonPosDir;  // direction TO the moon
+        uniform vec3 skyHorizon, skyZenith, sunColor;
+        uniform float fogDensity, nightFactor, sunHeight, moonHeight, time;
+
+        vec3 ACES(vec3 x){const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+            return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.0,1.0);}
+
+        float hash21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+        float hash31(vec3 p){ return fract(sin(dot(p,vec3(12.9898,78.233,37.719)))*43758.5453); }
+
+        // Procedural star field projected on the sky dome.
+        float stars(vec3 dir){
+            vec3 d = normalize(dir);
+            vec2 uv = vec2(atan(d.z,d.x), asin(clamp(d.y,-1.0,1.0)));
+            uv *= 24.0;
+            vec2 g = floor(uv);
+            float s = 0.0;
+            for(int x=-1;x<=1;++x) for(int y=-1;y<=1;++y){
+                vec2 cell=g+vec2(x,y);
+                float h=hash21(cell);
+                if(h>0.93){
+                    vec2 c=cell+vec2(hash21(cell+1.3),hash21(cell+2.7));
+                    float dd=length(uv-c);
+                    float bri=smoothstep(0.12,0.0,dd);
+                    float tw=0.6+0.4*sin(time*2.0+h*40.0);
+                    s+=bri*tw*(0.4+0.6*h);
+                }
+            }
+            return s;
+        }
+
+        void main(){
+            vec3 dir = normalize(viewDirF
+                + viewDirR * (ndc.x*aspect*tanHalfFov)
+                + viewDirU * (ndc.y*tanHalfFov));
+            float up = clamp(dir.y*0.5+0.5, 0.0, 1.0);
+
+            vec3 hz = pow(max(skyHorizon,vec3(0.)),vec3(2.2));
+            vec3 zn = pow(max(skyZenith,vec3(0.)),vec3(2.2));
+            vec3 col = mix(hz, zn, pow(up, 0.55));
+
+            // ---- Stars (only at night, fade in, hidden below horizon) ----
+            if(nightFactor > 0.05 && dir.y > -0.02){
+                float st = stars(dir) * nightFactor * smoothstep(-0.02,0.15,dir.y);
+                col += vec3(0.9,0.93,1.0) * st;
+            }
+
+            // ---- Sun: disc + atmospheric glow ----
+            if(sunHeight > -0.20){
+                float sd = max(dot(dir, normalize(sunPosDir)), 0.0);
+                float disc = smoothstep(0.9975, 0.9990, sd);    // crisp disc
+                float glow = pow(sd, 8.0)*0.35 + pow(sd, 180.0)*3.0;
+                float vis  = clamp(sunHeight*4.0+0.4, 0.0, 1.0); // dim near/below horizon
+                vec3 sc = pow(max(sunColor,vec3(0.)),vec3(2.2));
+                col += sc * glow * vis;
+                col += vec3(1.0,0.96,0.88) * disc * (1.8 + 4.0*vis);
+            }
+
+            // ---- Moon: larger disc with phase + craters, soft halo ----
+            if(moonHeight > -0.15){
+                vec3 md = normalize(moonPosDir);
+                float m = dot(dir, md);
+                float mvis = clamp(moonHeight*3.0+0.2,0.0,1.0);
+                // soft outer halo (kept dim so the surface stays readable)
+                float halo = pow(max(m,0.0), 1500.0)*0.5 + pow(max(m,0.0),120.0)*0.04;
+                // larger disc than the sun
+                float disc = smoothstep(0.99930, 0.99955, m);
+                // local coords on the moon disc for craters + terminator
+                vec3 mr = normalize(cross(md, vec3(0,1,0)));
+                vec3 mu = normalize(cross(mr, md));
+                vec2 lp = vec2(dot(dir,mr), dot(dir,mu)) * 600.0; // scaled disc-space
+                // several maria / craters as darker patches
+                float crater = 0.0;
+                crater += smoothstep(0.16,0.0,length(lp-vec2( 0.22, 0.14)))*0.40;
+                crater += smoothstep(0.12,0.0,length(lp-vec2(-0.28,-0.06)))*0.34;
+                crater += smoothstep(0.09,0.0,length(lp-vec2( 0.04,-0.26)))*0.30;
+                crater += smoothstep(0.06,0.0,length(lp-vec2(-0.10, 0.24)))*0.22;
+                crater += smoothstep(0.05,0.0,length(lp-vec2( 0.30,-0.18)))*0.18;
+                // phase terminator: lit fraction from sun-moon geometry
+                float phase = clamp(dot(md, normalize(sunPosDir))*0.5+0.5, 0.0, 1.0);
+                float lit = smoothstep(-0.18, 0.18, lp.x*0.9 + (phase-0.5)*1.6);
+                vec3 moonSurf = mix(vec3(0.78,0.80,0.88), vec3(0.42,0.46,0.56), crater);
+                // self-shadow on the dark side of the phase
+                float shade = mix(0.06, 1.0, lit);
+                col += moonSurf * disc * mvis * shade * 1.1;
+                col += vec3(0.55,0.62,0.85) * halo * mvis;
+            }
+
+            // fog haze fades the sky toward horizon color when dense
+            col = mix(col, hz, clamp((1.0-up)*fogDensity*0.5,0.0,0.85));
+            col = ACES(col);
+            col = pow(col, vec3(1.0/2.2));
+            FragColor = vec4(col, 1.0);
+        }
+    )glsl";
+    skyShader.compile(vertSky, fragSky);
+
+    // Full-screen triangle for the sky pass.
+    {
+        skyQuad.vertices.clear(); skyQuad.indices.clear();
+        Vertex a,b,c;
+        a.pos={-1,-1,0}; b.pos={3,-1,0}; c.pos={-1,3,0};
+        a.normal=b.normal=c.normal={0,0,1};
+        a.uv={0,0}; b.uv={2,0}; c.uv={0,2};
+        for(int i=0;i<4;++i){a.color[i]=b.color[i]=c.color[i]=1.0f;}
+        skyQuad.vertices={a,b,c};
+        skyQuad.indices={0,1,2};
+        skyQuad.upload();
+    }
+
+    // Initialise the shadow map (graceful fallback handled in shader if absent).
+    shadowMap.init(2048);
 
     std::string vertBill = R"glsl(
         layout(location=0)in vec3 aPos; layout(location=2)in vec2 aTexCoord;
@@ -214,8 +440,11 @@ void Game::init(int width, int height, bool mobileMode) {
     )glsl";
     billboardShader.compile(vertBill, fragBill);
 
-    grassTexture.generateNoise(128,128,false);
-    woodTexture.generateNoise(128,128,true);
+    // High-detail procedural materials (multi-octave fbm, mipmapped + aniso).
+    grassTexture.generateMaterial(512, 512, 0); // mossy ground
+    woodTexture.generateMaterial(512, 512, 1);  // weathered planks
+    stoneTexture.generateMaterial(512, 512, 2); // stone / rock
+    barkTexture.generateMaterial(256, 512, 3);  // tree bark
 
     // === Larger open world terrain ===
     generateTerrain(terrainMesh, 520.0f, 520.0f, 180, 180);
@@ -521,6 +750,9 @@ void Game::updateEnemies(float dt) {
 void Game::renderEnemies() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    mainShader.setInt("useTexture", 0);
+    mainShader.setFloat("matRoughness", 0.95f);
+    mainShader.setFloat("matMetallic", 0.0f);
 
     for (const auto& e : enemies) {
         if (!e.active) continue;
@@ -885,6 +1117,150 @@ void Game::drawBillboard(const Shader& sh, const Vec3& pos, float sx, float sy, 
     billboardQuad.draw();
 }
 
+// Submit every opaque world object once. Used by both the shadow (depthOnly)
+// and the main lit pass so geometry can never drift out of sync between them.
+void Game::renderSceneGeometry(Shader& sh, bool depthOnly) {
+    auto setTex = [&](Texture& t, int useTex) {
+        if (!depthOnly) {
+            sh.setInt("useTexture", useTex);
+            if (useTex) { glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, t.id); }
+        }
+    };
+
+    // Terrain
+    sh.setMat4("model", Mat4::identity());
+    setTex(grassTexture, 1);
+    if (!depthOnly) sh.setFloat("matRoughness", 0.92f), sh.setFloat("matMetallic", 0.0f);
+    terrainMesh.draw();
+
+    // Cabin
+    sh.setMat4("model", Mat4::identity());
+    setTex(woodTexture, 1);
+    if (!depthOnly) sh.setFloat("matRoughness", 0.75f);
+    cabinMesh.draw();
+
+    // Village Houses
+    setTex(woodTexture, 1);
+    for (const auto& obj : villageObjects) {
+        if (obj.type == 0) {
+            if (!frustum.isSphereInside(obj.pos, 12.0f)) continue;
+            Mat4 hm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale, obj.scale, obj.scale});
+            sh.setMat4("model", hm);
+            houseMesh.draw();
+        }
+    }
+
+    // Well
+    Vec3 wellPos = {-20, getTerrainHeight(-20,-50), -50};
+    if (frustum.isSphereInside(wellPos, 6.0f)) {
+        setTex(stoneTexture, 1);
+        if (!depthOnly) sh.setFloat("matRoughness", 0.85f);
+        sh.setMat4("model", Mat4::translation(wellPos));
+        wellMesh.draw();
+    }
+
+    // Car
+    Vec3 carPos = {12, getTerrainHeight(12,78), 78};
+    if (frustum.isSphereInside(carPos, 8.0f)) {
+        setTex(stoneTexture, 0);
+        if (!depthOnly) sh.setFloat("matRoughness", 0.35f), sh.setFloat("matMetallic", 0.8f);
+        Mat4 cm = Mat4::translation(carPos) * Mat4::rotationY(M_PI/4);
+        sh.setMat4("model", cm);
+        carMesh.draw();
+        if (!depthOnly) sh.setFloat("matMetallic", 0.0f);
+    }
+
+    // Trees (textured bark)
+    setTex(barkTexture, 1);
+    if (!depthOnly) sh.setFloat("matRoughness", 0.95f);
+    for (size_t i = 0; i < treePositions.size(); ++i) {
+        if (!frustum.isSphereInside(treePositions[i], 9.0f)) continue;
+        Mat4 tm = Mat4::translation(treePositions[i]) * Mat4::scaling({treeScales[i]});
+        sh.setMat4("model", tm);
+        treeMesh.draw();
+    }
+
+    // Village Rocks & Fences
+    for (const auto& obj : villageObjects) {
+        if (obj.type == 1) {
+            if (!frustum.isSphereInside(obj.pos, 5.0f)) continue;
+            setTex(stoneTexture, 1);
+            if (!depthOnly) sh.setFloat("matRoughness", 0.9f);
+            Mat4 rm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale});
+            sh.setMat4("model", rm);
+            rockMesh.draw();
+        } else if (obj.type == 2) {
+            if (!frustum.isSphereInside(obj.pos, 10.0f)) continue;
+            setTex(woodTexture, 1);
+            if (!depthOnly) sh.setFloat("matRoughness", 0.8f);
+            Mat4 fm = Mat4::translation(obj.pos);
+            sh.setMat4("model", fm);
+            fenceMesh.draw();
+        }
+    }
+
+    // Collectibles (vertex-colored)
+    setTex(woodTexture, 0);
+    if (!depthOnly) sh.setFloat("matRoughness", 0.6f);
+    if (currentDay >= 3) for (const auto& l : woodLogs) if (!l.collected) {
+        Mat4 lm = Mat4::translation(l.pos) * Mat4::rotationX(M_PI/2) * Mat4::scaling({0.5f});
+        sh.setMat4("model", lm);
+        logMesh.draw();
+    }
+    if (currentDay >= 4) for (const auto& f : flowers) if (!f.collected) {
+        Mat4 fm = Mat4::translation(f.pos) * Mat4::scaling({0.85f});
+        sh.setMat4("model", fm);
+        flowerMesh.draw();
+    }
+    if (currentDay >= 6) for (const auto& s : stones) if (!s.collected) {
+        Mat4 sm = Mat4::translation(s.pos) * Mat4::scaling({0.75f});
+        sh.setMat4("model", sm);
+        stoneMesh.draw();
+    }
+    if (currentDay >= 5 && !toolFound) {
+        Mat4 tm = Mat4::translation(oldTool.pos) * Mat4::scaling({0.72f});
+        sh.setMat4("model", tm);
+        toolMesh.draw();
+    }
+    if (currentDay >= 7 && !herbFound) {
+        Mat4 hm = Mat4::translation(rareHerb.pos) * Mat4::scaling({0.68f});
+        sh.setMat4("model", hm);
+        toolMesh.draw();
+    }
+    if (!depthOnly) { sh.setFloat("matRoughness", 0.8f); sh.setFloat("matMetallic", 0.0f); }
+}
+
+// First pass: render the scene depth as seen from the directional (sun) light.
+void Game::renderDepthPass() {
+    // Build a light view/projection that follows the player and covers the
+    // near field where shadows are actually visible through the fog.
+    Vec3 center = camera.position + camera.front * 35.0f;
+    center.y = getTerrainHeight(center.x, center.z);
+    Vec3 lightDir = dirLightDir.normalized();
+    float dist = 140.0f;
+    Vec3 lightPos = center - lightDir * dist;
+    Vec3 up = fabsf(lightDir.y) > 0.95f ? Vec3{0,0,1} : Vec3{0,1,0};
+
+    Mat4 lightView = Mat4::lookAt(lightPos, center, up);
+    float extent = 120.0f;
+    Mat4 lightProj = Mat4::ortho(-extent, extent, -extent, extent, 1.0f, dist + 220.0f);
+    lightSpaceMatrix = lightProj * lightView;
+
+    shadowMap.beginRender();
+    glEnable(GL_DEPTH_TEST);
+    // Front-face culling during the depth pass reduces peter-panning / acne.
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+
+    depthShader.use();
+    depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+    renderSceneGeometry(depthShader, true);
+
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    shadowMap.endRender(screenWidth, screenHeight);
+}
+
 void Game::render() {
     glClearColor(fogColor.x, fogColor.y, fogColor.z, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -925,16 +1301,46 @@ void Game::render() {
     }
 
     // === 3D RENDER ===
-    mainShader.use();
     Mat4 viewMat = camera.getViewMatrix();
-    mainShader.setMat4("view", viewMat);
     float ratio = float(screenWidth)/screenHeight;
     Mat4 projMat = Mat4::perspective(45*M_PI/180, ratio, 0.1f, 1100);
-    mainShader.setMat4("projection", projMat);
-    
-    // Extract Frustum for culling
+
+    // Extract Frustum for culling (used by both passes)
     Mat4 vpMat = projMat * viewMat;
     frustum.extract(vpMat);
+
+    // --- Pass 1: shadow depth map from the sun ---
+    renderDepthPass();
+
+    // --- Sky: procedural dome with moving sun, moon, stars behind everything ---
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    skyShader.use();
+    skyShader.setVec3("viewDirF", camera.front);
+    skyShader.setVec3("viewDirR", Vec3::cross(camera.front, {0,1,0}).normalized());
+    skyShader.setVec3("viewDirU", camera.up);
+    skyShader.setFloat("aspect", ratio);
+    skyShader.setFloat("tanHalfFov", tanf(0.5f * 45.0f * (float)M_PI/180.0f));
+    // directions TO each body (sky position) = -travel direction
+    skyShader.setVec3("sunPosDir",  (sunDir  * -1.0f).normalized());
+    skyShader.setVec3("moonPosDir", (moonDir * -1.0f).normalized());
+    skyShader.setVec3("skyHorizon", horizonColor);
+    skyShader.setVec3("skyZenith",  zenithColor);
+    // warm sun colour at the disc itself (independent of dimmed light colour)
+    skyShader.setVec3("sunColor", { 1.0f, 0.93f, 0.78f });
+    skyShader.setFloat("fogDensity", fogDensity);
+    skyShader.setFloat("nightFactor", nightFactor);
+    skyShader.setFloat("sunHeight", sunHeight);
+    skyShader.setFloat("moonHeight", moonHeight);
+    skyShader.setFloat("time", stateTimer);
+    skyQuad.draw();
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+
+    // --- Pass 2: main lit render ---
+    mainShader.use();
+    mainShader.setMat4("view", viewMat);
+    mainShader.setMat4("projection", projMat);
 
     mainShader.setVec3("viewPos", camera.position);
     mainShader.setVec3("fogColor", fogColor);
@@ -949,97 +1355,13 @@ void Game::render() {
     mainShader.setVec3("flashDir", camera.front);
     mainShader.setFloat("flashIntensity", flashlightIntensity);
 
-    // Terrain
-    mainShader.setMat4("model", Mat4::identity());
-    mainShader.setInt("useTexture", 1);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, grassTexture.id);
-    terrainMesh.draw();
+    // Bind the shadow map produced in the depth pass for the lit pass.
+    shadowMap.bindForReading(4);
+    mainShader.setInt("shadowMap", 4);
+    mainShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // Cabin
-    mainShader.setMat4("model", Mat4::identity());
-    mainShader.setInt("useTexture", 1);
-    glBindTexture(GL_TEXTURE_2D, woodTexture.id);
-    cabinMesh.draw();
-
-    // Village Houses
-    for (const auto& obj : villageObjects) {
-        if (obj.type == 0) {
-            if (!frustum.isSphereInside(obj.pos, 12.0f)) continue;
-            Mat4 hm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale, obj.scale, obj.scale});
-            mainShader.setMat4("model", hm);
-            mainShader.setInt("useTexture", 0);
-            houseMesh.draw();
-        }
-    }
-
-    // Well
-    Vec3 wellPos = {-20, getTerrainHeight(-20,-50), -50};
-    if (frustum.isSphereInside(wellPos, 6.0f)) {
-        Mat4 wm = Mat4::translation(wellPos);
-        mainShader.setMat4("model", wm);
-        mainShader.setInt("useTexture", 0);
-        wellMesh.draw();
-    }
-
-    // Car
-    Vec3 carPos = {12, getTerrainHeight(12,78), 78};
-    if (frustum.isSphereInside(carPos, 8.0f)) {
-        Mat4 cm = Mat4::translation(carPos) * Mat4::rotationY(M_PI/4);
-        mainShader.setMat4("model", cm);
-        carMesh.draw();
-    }
-
-    // Trees
-    mainShader.setInt("useTexture", 0);
-    for (size_t i = 0; i < treePositions.size(); ++i) {
-        if (!frustum.isSphereInside(treePositions[i], 9.0f)) continue;
-        Mat4 tm = Mat4::translation(treePositions[i]) * Mat4::scaling({treeScales[i]});
-        mainShader.setMat4("model", tm);
-        treeMesh.draw();
-    }
-
-    // Village Rocks & Fences
-    for (const auto& obj : villageObjects) {
-        if (obj.type == 1) {
-            if (!frustum.isSphereInside(obj.pos, 5.0f)) continue;
-            Mat4 rm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale});
-            mainShader.setMat4("model", rm);
-            rockMesh.draw();
-        } else if (obj.type == 2) {
-            if (!frustum.isSphereInside(obj.pos, 10.0f)) continue;
-            Mat4 fm = Mat4::translation(obj.pos);
-            mainShader.setMat4("model", fm);
-            fenceMesh.draw();
-        }
-    }
-
-    // Collectibles
-    if (currentDay >= 3) for (const auto& l : woodLogs) if (!l.collected) {
-        Mat4 lm = Mat4::translation(l.pos) * Mat4::rotationX(M_PI/2) * Mat4::scaling({0.5f});
-        mainShader.setMat4("model", lm);
-        logMesh.draw();
-    }
-    if (currentDay >= 4) for (const auto& f : flowers) if (!f.collected) {
-        Mat4 fm = Mat4::translation(f.pos) * Mat4::scaling({0.85f});
-        mainShader.setMat4("model", fm);
-        flowerMesh.draw();
-    }
-    if (currentDay >= 6) for (const auto& s : stones) if (!s.collected) {
-        Mat4 sm = Mat4::translation(s.pos) * Mat4::scaling({0.75f});
-        mainShader.setMat4("model", sm);
-        stoneMesh.draw();
-    }
-    if (currentDay >= 5 && !toolFound) {
-        Mat4 tm = Mat4::translation(oldTool.pos) * Mat4::scaling({0.72f});
-        mainShader.setMat4("model", tm);
-        toolMesh.draw();
-    }
-    if (currentDay >= 7 && !herbFound) {
-        Mat4 hm = Mat4::translation(rareHerb.pos) * Mat4::scaling({0.68f});
-        mainShader.setMat4("model", hm);
-        toolMesh.draw();
-    }
+    // Submit all opaque world geometry through the shared path (textured, lit).
+    renderSceneGeometry(mainShader, false);
 
     // Enemies
     renderEnemies();
@@ -1121,8 +1443,14 @@ void Game::render() {
 void Game::cleanup() {
     mainShader.cleanup();
     billboardShader.cleanup();
+    depthShader.cleanup();
+    skyShader.cleanup();
+    skyQuad.cleanup();
+    shadowMap.cleanup();
     grassTexture.cleanup();
     woodTexture.cleanup();
+    stoneTexture.cleanup();
+    barkTexture.cleanup();
     terrainMesh.cleanup();
     cabinMesh.cleanup();
     treeMesh.cleanup();
@@ -1247,17 +1575,75 @@ void Game::setupWeather() {
 }
 
 void Game::applyTimeOfDay() {
-    float t = timeOfDay;
-    float dayFactor = 0.0f;
-    if (t < 5.0f) dayFactor = 0.0f;
-    else if (t < 8.0f) dayFactor = (t - 5.0f) / 3.0f;
-    else if (t < 17.0f) dayFactor = 1.0f;
-    else if (t < 21.0f) dayFactor = 1.0f - (t - 17.0f) / 4.0f;
-    else dayFactor = 0.0f;
+    const float PI = 3.14159265358979323846f;
+    float t = timeOfDay; // 0..24
 
-    ambientColor = Vec3::lerp(baseAmbientColor * 0.25f, baseAmbientColor, dayFactor);
-    dirLightColor = Vec3::lerp(baseDirLightColor * 0.15f, baseDirLightColor, dayFactor);
-    fogColor = Vec3::lerp(baseFogColor * 0.35f, baseFogColor, dayFactor);
+    // --- Sun arc ---------------------------------------------------------
+    // Sun rises ~6:00, peaks at 12:00, sets ~18:00. We map the day fraction
+    // to an angle so the sun sweeps a half-circle across the sky. The light
+    // direction is the direction the *photons travel* (i.e. -position).
+    float sunAngle = (t - 6.0f) / 12.0f * PI;   // 0 at sunrise .. PI at sunset
+    Vec3 sunPos = {
+        cosf(sunAngle),                          // east -> west
+        sinf(sunAngle),                          // elevation
+        -0.35f                                   // slight tilt toward the south
+    };
+    sunPos = sunPos.normalized();
+    sunHeight = sunPos.y;
+    sunDir = (sunPos * -1.0f).normalized();      // light travels downward
+
+    // --- Moon arc (opposite phase, slightly different plane) -------------
+    float moonAngle = (t + 6.0f) / 12.0f * PI;   // peaks around midnight
+    Vec3 moonPos = {
+        cosf(moonAngle) * 0.9f,
+        sinf(moonAngle),
+        0.4f
+    };
+    moonPos = moonPos.normalized();
+    moonHeight = moonPos.y;
+    moonDir = (moonPos * -1.0f).normalized();
+
+    // --- Day / night blending -------------------------------------------
+    // dayFactor smoothly follows the sun's elevation around the horizon.
+    float dayFactor = clamp(sunHeight * 4.0f + 0.15f, 0.0f, 1.0f);
+    // Warm tint near the horizon (sunrise / sunset).
+    float horizonGlow = clamp(1.0f - fabsf(sunHeight) * 3.0f, 0.0f, 1.0f)
+                        * clamp(sunHeight * 6.0f + 0.6f, 0.0f, 1.0f);
+    nightFactor = 1.0f - dayFactor;
+
+    // --- Choose the active light: sun by day, moon by night --------------
+    bool sunUp = sunHeight > -0.05f;
+    if (sunUp) {
+        dirLightDir = sunDir;
+        Vec3 dayCol  = baseDirLightColor;
+        Vec3 warmCol = {1.0f, 0.62f, 0.40f}; // golden hour
+        dirLightColor = Vec3::lerp(dayCol, warmCol, horizonGlow) * (0.15f + 0.85f * dayFactor);
+    } else {
+        // Moonlight: cool, dim, only meaningful when the moon is above horizon.
+        float moonUp = clamp(moonHeight * 3.0f, 0.0f, 1.0f);
+        dirLightDir = moonDir;
+        dirLightColor = Vec3(0.32f, 0.40f, 0.62f) * (0.12f + 0.30f * moonUp);
+    }
+
+    // --- Ambient & fog ---------------------------------------------------
+    ambientColor = Vec3::lerp(baseAmbientColor * 0.22f, baseAmbientColor, dayFactor);
+    fogColor     = Vec3::lerp(baseFogColor * 0.30f, baseFogColor, dayFactor);
+    // pull fog toward a warm hue at golden hour
+    fogColor = Vec3::lerp(fogColor, Vec3(0.85f, 0.6f, 0.45f), horizonGlow * 0.4f);
+
+    // --- Sky dome colors used by the sky shader --------------------------
+    Vec3 dayZenith   = {0.28f, 0.45f, 0.72f};
+    Vec3 dayHorizon  = baseFogColor;
+    Vec3 duskZenith  = {0.20f, 0.16f, 0.30f};
+    Vec3 duskHorizon = {0.95f, 0.55f, 0.32f};
+    Vec3 nightZenith = {0.02f, 0.03f, 0.07f};
+    Vec3 nightHorizon= {0.05f, 0.07f, 0.13f};
+
+    // blend day -> dusk -> night
+    Vec3 dz = Vec3::lerp(dayZenith,  duskZenith,  horizonGlow);
+    Vec3 dh = Vec3::lerp(dayHorizon, duskHorizon, horizonGlow);
+    zenithColor  = Vec3::lerp(nightZenith,  dz, dayFactor);
+    horizonColor = Vec3::lerp(nightHorizon, dh, dayFactor);
 }
 
 void Game::updateWeather(float dt) {
