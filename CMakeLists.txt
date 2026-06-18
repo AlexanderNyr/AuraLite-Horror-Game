@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(AuraLiteHorror LANGUAGES C CXX)
+project(AnxietyHorror LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(AURALITE_WARNINGS "Enable useful compiler warnings" ON)
+option(ANXIETYHORROR_WARNINGS "Enable useful compiler warnings" ON)
 
 set(GAME_SOURCES
     src/main.cpp
@@ -17,13 +17,14 @@ set(GAME_SOURCES
     src/localization.cpp
     src/audio.cpp
     src/save_system.cpp
+    src/settings_system.cpp
 )
 
 function(configure_common_target target_name)
     target_include_directories(${target_name} PRIVATE src)
     target_compile_features(${target_name} PRIVATE cxx_std_17)
 
-    if(AURALITE_WARNINGS)
+    if(ANXIETYHORROR_WARNINGS)
         if(MSVC)
             target_compile_options(${target_name} PRIVATE /W4 /permissive-)
             target_compile_definitions(${target_name} PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
@@ -34,10 +35,35 @@ function(configure_common_target target_name)
 endfunction()
 
 if(ANDROID)
-    message(STATUS "Building AuraLite Horror for Android / OpenGL ES 3.2")
+    message(STATUS "Building AnxietyHorror for Android / OpenGL ES 3.2")
+
+    # SDL2: prefer a local checkout, otherwise fetch the official release.
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/SDL2/CMakeLists.txt")
+        message(STATUS "Using local SDL2 from third_party/SDL2")
+        set(SDL2_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/SDL2")
+        set(SDL_SHARED ON CACHE BOOL "Build shared SDL2 library" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "Build static SDL2 library" FORCE)
+        set(SDL_TEST OFF CACHE BOOL "Build SDL tests" FORCE)
+        add_subdirectory("${SDL2_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/SDL2")
+    else()
+        message(STATUS "SDL2 not found locally. Fetching SDL2 2.28.5...")
+        include(FetchContent)
+        FetchContent_Declare(
+            SDL2
+            URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.28.5.zip
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        set(SDL_SHARED ON CACHE BOOL "Build shared SDL2 library" FORCE)
+        set(SDL_STATIC OFF CACHE BOOL "Build static SDL2 library" FORCE)
+        set(SDL_TEST OFF CACHE BOOL "Build SDL tests" FORCE)
+        FetchContent_MakeAvailable(SDL2)
+        set(SDL2_SOURCE_DIR "${sdl2_SOURCE_DIR}")
+    endif()
 
     add_library(main SHARED ${GAME_SOURCES})
     configure_common_target(main)
+
+    target_include_directories(main PRIVATE "${SDL2_SOURCE_DIR}/include")
 
     target_link_libraries(main PRIVATE
         GLESv3
@@ -46,7 +72,7 @@ if(ANDROID)
         SDL2
     )
 else()
-    message(STATUS "Building AuraLite Horror for desktop / OpenGL 4.6")
+    message(STATUS "Building AnxietyHorror for desktop / OpenGL 4.6")
 
     add_executable(AnxietyHorror
         ${GAME_SOURCES}

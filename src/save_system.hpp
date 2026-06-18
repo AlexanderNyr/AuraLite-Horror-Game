@@ -13,7 +13,7 @@ struct SaveData {
 
 class SaveSystem {
 public:
-    static bool saveGame(const SaveData& data, const std::string& filePath = "auralite_save.dat");
-    static bool loadGame(SaveData& data, const std::string& filePath = "auralite_save.dat");
-    static bool hasSaveGame(const std::string& filePath = "auralite_save.dat");
+    static bool saveGame(const SaveData& data, const std::string& filePath = "anxietyhorror_save.dat");
+    static bool loadGame(SaveData& data, const std::string& filePath = "anxietyhorror_save.dat");
+    static bool hasSaveGame(const std::string& filePath = "anxietyhorror_save.dat");
 };

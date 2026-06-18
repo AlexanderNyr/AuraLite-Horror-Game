@@ -63,7 +63,7 @@ void Localization::init(const std::string& languageDirectory) {
     loadFile(languages[0].filePath, fallbackTable);
 
     std::string preferred = "en";
-    if (const char* envLang = std::getenv("AURALITE_LANG")) {
+    if (const char* envLang = std::getenv("ANXIETYHORROR_LANG")) {
         preferred = envLang;
     } else if (const char* systemLang = std::getenv("LANG")) {
         std::string lang = systemLang;

@@ -494,14 +494,13 @@ void UIRenderer::drawText(const std::string& text, float x, float y, float scale
 
 void UIRenderer::drawVirtualJoysticks(float leftX, float leftY, float leftRadius, float activeX, float activeY,
                                       float rightX, float rightY, float rightRadius, float activeCamX, float activeCamY,
-                                      bool isAndroid, const std::string& actionLabel) {
+                                      bool isAndroid, bool flashlightOn, const std::string& actionLabel) {
     if (!isAndroid) return;
 
     // Draw Left joystick (movement)
     float baseColor[4] = {0.3f, 0.3f, 0.3f, 0.4f};
     float innerColor[4] = {0.5f, 0.5f, 0.5f, 0.6f};
 
-    // Draw background circle (using rects as visual proxy, but let's make it look like a nice cross or circles)
     drawRect(leftX - leftRadius, leftY - leftRadius, leftRadius * 2.0f, leftRadius * 2.0f, baseColor);
     drawRect(activeX - 20.0f, activeY - 20.0f, 40.0f, 40.0f, innerColor);
 
@@ -510,13 +509,22 @@ void UIRenderer::drawVirtualJoysticks(float leftX, float leftY, float leftRadius
     drawRect(rightX - rightRadius, rightY - rightRadius, rightRadius * 2.0f, rightRadius * 2.0f, rightBaseColor);
     drawRect(activeCamX - 25.0f, activeCamY - 25.0f, 50.0f, 50.0f, innerColor);
 
-    // On-screen Action/Interact Button (for Android sleeping/picking logs)
+    // On-screen Action/Interact Button
     float actionColor[4] = {0.8f, 0.2f, 0.2f, 0.5f};
-    // Let's place the Interact button on the lower-right side, above the look trackpad
-    drawRect(width - 160.0f, height - 320.0f, 100.0f, 100.0f, actionColor);
-    
+    drawRect(width - 150.0f, height - 310.0f, 100.0f, 100.0f, actionColor);
+
     float actionTextColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    drawText(actionLabel, width - 150.0f, height - 280.0f, 1.5f, actionTextColor);
+    drawText(actionLabel, width - 140.0f, height - 270.0f, 1.5f, actionTextColor);
+
+    // On-screen Flashlight Button
+    float flashColor[4];
+    if (flashlightOn) {
+        flashColor[0] = 0.95f; flashColor[1] = 0.88f; flashColor[2] = 0.4f; flashColor[3] = 0.6f;
+    } else {
+        flashColor[0] = 0.25f; flashColor[1] = 0.25f; flashColor[2] = 0.25f; flashColor[3] = 0.4f;
+    }
+    drawRect(width - 150.0f, 95.0f, 100.0f, 100.0f, flashColor);
+    drawText("F", width - 124.0f, 130.0f, 2.0f, actionTextColor);
 }
 
 void UIRenderer::cleanup() {

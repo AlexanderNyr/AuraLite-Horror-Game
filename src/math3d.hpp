@@ -8,6 +8,7 @@ struct Vec3 {
 
     Vec3() = default;
     Vec3(float x, float y, float z) : x(x), y(y), z(z) {}
+    Vec3(float v) : x(v), y(v), z(v) {}
 
     Vec3 operator+(const Vec3& o) const { return {x + o.x, y + o.y, z + o.z}; }
     Vec3 operator-(const Vec3& o) const { return {x - o.x, y - o.y, z - o.z}; }
@@ -173,6 +174,26 @@ struct Plane {
 
     float distance(const Vec3& p) const {
         return Vec3::dot(n, p) + d;
+    }
+};
+
+struct AABB {
+    Vec3 min;
+    Vec3 max;
+
+    bool contains(const Vec3& p) const {
+        return p.x >= min.x && p.x <= max.x &&
+               p.y >= min.y && p.y <= max.y &&
+               p.z >= min.z && p.z <= max.z;
+    }
+
+    bool intersectsSphere(const Vec3& center, float radius) const {
+        Vec3 closest(
+            std::max(min.x, std::min(center.x, max.x)),
+            std::max(min.y, std::min(center.y, max.y)),
+            std::max(min.z, std::min(center.z, max.z))
+        );
+        return (center - closest).length() < radius;
     }
 };
 

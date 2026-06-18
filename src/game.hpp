@@ -8,13 +8,22 @@
 #include "localization.hpp"
 #include "audio.hpp"
 #include "save_system.hpp"
+#include "settings_system.hpp"
 
 enum GameState {
     STATE_MENU,
+    STATE_MENU_SETTINGS,
     STATE_INTRO,
     STATE_GAMEPLAY,
     STATE_SLEEP_FADE,
     STATE_ENDING
+};
+
+enum WeatherType {
+    WEATHER_CLEAR,
+    WEATHER_RAIN,
+    WEATHER_SNOW,
+    WEATHER_FOGGY
 };
 
 struct Collectible {
@@ -29,6 +38,23 @@ struct VillageObject {
     float scale = 1.0f;
 };
 
+struct CircleCollider {
+    Vec3 center;
+    float radius = 1.0f;
+    bool active = true;
+};
+
+struct Enemy {
+    Vec3 pos;
+    Vec3 target;
+    int type = 0; // 0=shadow, 1=ghost
+    float speed = 1.5f;
+    bool active = true;
+    float animTimer = 0.0f;
+    float opacity = 0.0f;
+    float stateTimer = 0.0f;
+};
+
 class Game {
 public:
     GameState state = STATE_INTRO;
@@ -41,6 +67,13 @@ public:
     Camera camera;
     UIRenderer ui;
     Localization loc;
+    GameSettings settings;
+
+    int menuSelection = 0;
+    int settingsSelection = 0;
+    static constexpr int MENU_ITEM_COUNT = 4;
+    static constexpr int SETTINGS_ITEM_COUNT = 4;
+
 
     Shader mainShader;
     Shader billboardShader;
@@ -60,6 +93,9 @@ public:
     Mesh stoneMesh;
     Mesh toolMesh;
 
+    Mesh enemyMesh;
+    Mesh ghostMesh;
+
     // === NEW: Village meshes ===
     Mesh houseMesh;
     Mesh rockMesh;
@@ -72,14 +108,40 @@ public:
     // Village objects
     std::vector<VillageObject> villageObjects;
 
+    // Collision geometry
+    std::vector<AABB> aabbColliders;
+    std::vector<CircleCollider> circleColliders;
+    static constexpr float PLAYER_RADIUS = 0.4f;
+    static constexpr float PLAYER_HEIGHT = 1.8f;
+
+    // Enemies
+    std::vector<Enemy> enemies;
+    float fear = 0.0f;
+
+
     // Environment
     Vec3 ambientColor;
     Vec3 dirLightColor;
     Vec3 dirLightDir;
     Vec3 fogColor;
+    Vec3 baseAmbientColor;
+    Vec3 baseDirLightColor;
+    Vec3 baseFogColor;
     float fogStart = 300.0f;
     float fogEnd = 800.0f;
     float fogDensity = 1.0f;
+
+    // Time of day / weather
+    float timeOfDay = 12.0f;
+    float timeScale = 0.5f; // real seconds per game hour
+    WeatherType weather = WEATHER_CLEAR;
+    float windStrength = 0.0f;
+    std::vector<Vec3> rainParticles;
+    std::vector<Vec3> snowParticles;
+    Mesh rainMesh;
+    Mesh snowMesh;
+    static constexpr int RAIN_PARTICLE_COUNT = 800;
+    static constexpr int SNOW_PARTICLE_COUNT = 600;
 
     bool flashlightOn = false;
     float flashlightIntensity = 0.0f;
@@ -142,7 +204,29 @@ private:
     void updateTouchLayout();
     void spawnCollectibles();
     void generateVillage();
+    void buildColliders();
+    void spawnEnemies();
+    void updateEnemies(float dt);
+    void renderEnemies();
+    void setupWeather();
+    void updateWeather(float dt);
+    void renderWeather();
+    void applyTimeOfDay();
+    void buildWeatherMeshes();
+    void updateWeatherMeshes();
     void triggerNextDay();
     void resetPlayer();
+    void applySettings();
+    void loadSettings();
+    void saveSettings();
     void drawBillboard(const Shader& shader, const Vec3& pos, float scaleX, float scaleY, int type, float opacity = 1.0f);
+
+    Vec3 resolveCollisions(const Vec3& oldPos, const Vec3& newPos) const;
+    bool collidesAt(const Vec3& pos, float radius) const;
+
+    void renderMenu();
+    void renderSettings();
+    void renderGameOver();
+    void updateMenu(float dt);
+    void updateSettings(float dt);
 };

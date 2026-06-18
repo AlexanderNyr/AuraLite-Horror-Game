@@ -1,7 +1,7 @@
 @echo off
-title Building Anxiety Fog: Horror Loop
+title Building AnxietyHorror
 echo =========================================================
-echo    Anxiety Fog: Horror Loop - Windows Build Script
+echo    AnxietyHorror - Windows Build Script
 echo =========================================================
 echo.
 

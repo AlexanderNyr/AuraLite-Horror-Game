@@ -6,8 +6,8 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "HorrorGame", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "HorrorGame", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AnxietyHorror", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AnxietyHorror", __VA_ARGS__)
 #else
 #define LOGI(...) printf(__VA_ARGS__); printf("\n")
 #define LOGE(...) fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n")
@@ -18,7 +18,7 @@ bool Shader::compile(const std::string& vertexSource, const std::string& fragmen
 #ifdef __ANDROID__
     versionHeader = "#version 320 es\nprecision mediump float;\n";
 #else
-    versionHeader = "#version 460 core\n";
+    versionHeader = "#version 450 core\n";
 #endif
 
     std::string fullVert = versionHeader + vertexSource;

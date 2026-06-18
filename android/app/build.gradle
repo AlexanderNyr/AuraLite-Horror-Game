@@ -55,7 +55,27 @@ android {
 dependencies {
     implementation 'androidx.core:core-ktx:1.10.1'
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    // To integrate SDL2, we can fetch its official maven package or compile from source.
-    // Standard SDL2 includes are built directly via CMake in modern setups,
-    // or loaded via prebuilt AAR files.
 }
+
+// Download SDL2 Java sources if they are not present yet.
+// The native SDL2 library is built automatically by CMake via FetchContent.
+task downloadSDL2 {
+    def marker = file('src/main/java/org/libsdl/app/SDLActivity.java')
+    onlyIf { !marker.exists() }
+    doLast {
+        def sdlZip = new File(buildDir, 'SDL2.zip')
+        sdlZip.parentFile.mkdirs()
+        exec {
+            commandLine 'curl', '-L', '-o', sdlZip, 'https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.28.5.zip'
+        }
+        copy {
+            from zipTree(sdlZip)
+            into buildDir
+        }
+        copy {
+            from new File(buildDir, 'SDL-release-2.28.5/android-project/app/src/main/java/org/libsdl/app')
+            into file('src/main/java/org/libsdl/app')
+        }
+    }
+}
+preBuild.dependsOn downloadSDL2

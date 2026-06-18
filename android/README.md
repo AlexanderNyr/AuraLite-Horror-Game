@@ -1,24 +1,32 @@
-# Android notes
+# Android build
 
-The C++ code already has Android-specific branches for OpenGL ES 3.0, touch controls and `.lang` localization assets, but the Gradle project still needs a real SDL2 Android integration before it can produce a complete APK.
+The project is now set up to build an Android APK with SDL2.
 
-Recommended options:
+## What is already configured
 
-1. Add SDL2 Android sources as a Gradle module, following the official SDL2 Android template.
-2. Or use a maintained SDL2 Android AAR that provides:
-   - `org.libsdl.app.SDLActivity`
-   - native `libSDL2.so`
-   - headers/libs visible to CMake/NDK.
+- `CMakeLists.txt` (project root) builds `libSDL2.so` via CMake/FetchContent for Android and links the native `main` library against it.
+- `app/src/main/java/org/libsdl/app/` contains the required SDL2 Java classes (`SDLActivity`, `SDLSurface`, `SDLAudioManager`, `HIDDevice*`, etc.).
+- `app/src/main/java/com/example/horror/MainActivity.kt` extends `SDLActivity` and loads the native libraries `SDL2` and `main`.
+- `app/build.gradle` contains a `downloadSDL2` task that fetches the SDL2 Java sources automatically if they are missing.
+- `.lang` localization files are packaged as assets via `sourceSets`.
 
-Current entry point:
+## Requirements
 
-- `android/app/src/main/java/com/example/horror/MainActivity.kt`
-- native library loaded: `main`
-- expected SDL library: `SDL2`
+- Android Studio or the Android SDK command line tools
+- Android SDK (API 33 used by the project)
+- Android NDK (CMake 3.22.1)
+- `curl` in PATH (used by the Gradle task to download SDL2 Java sources on first build)
 
-Once SDL2 is wired, build with:
+## Build
 
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
+
+The first build will:
+1. Download SDL2 sources (if the Java files are not already present).
+2. Build `libSDL2.so` and `libmain.so` via CMake/NDK.
+3. Produce `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+If you want to use a pre-downloaded SDL2 checkout instead of FetchContent, place it at `third_party/SDL2/`; CMake will prefer that local copy.

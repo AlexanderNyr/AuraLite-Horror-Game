@@ -1,17 +1,37 @@
-# Aura Valley - 9 Days (Español)
+# AnxietyHorror - 9 Days (Español)
 
 language.code = es
 language.name = Espanol
 
-menu.title = VALLE AURA
+menu.title = AnxietyHorror
 menu.subtitle = Nueve dias tranquilos entre la niebla
 menu.start = Pulsa ENTER / ACTION para comenzar
-menu.controls = WASD mover | Raton mirar | Shift mas rapido | E interactuar | F linterna
+menu.controls = WASD / Arriba-Abajo navegar | Enter seleccionar
+menu.continue = Continuar
+menu.newgame = Nuevo Juego
+menu.settings = Opciones
+menu.exit = Salir
+
+settings.title = Opciones
+settings.language = Idioma
+settings.sensitivity = Sensibilidad del Raton
+settings.viewdistance = Distancia de Vision
+settings.back = Volver
+settings.controls = WASD / Flechas navegar | Izquierda-Derecha ajustar | Enter volver
 
 intro.prompt = Pulsa ACTION para continuar...
 
 end.title = El Valle Recuerda
 end.text = Despues de nueve dias la niebla\nse siente como una vieja amiga.\nDejas el valle cambiado,\npero en paz.
+
+gameover.title = La Niebla te Llevo
+gameover.text = Algo en la bruma te encontro.\nIntenta mantenerte lejos de las sombras.
+gameover.restart = Pulsa ACTION para volver al menu
+
+weather.clear = Despejado
+weather.rain = Lluvia
+weather.snow = Nieve
+weather.foggy = Niebla
 
 d1.obj = Explora el valle con calma.\nVuelve a la cabana cuando quieras descansar.
 d1.diary = DIA 1\n\nEl valle me recibe en silencio.\nCreo que me quedare aqui un tiempo.\nTodo se siente quieto y suave.
@@ -23,9 +43,11 @@ d2.check = Ve al pozo e inspeccionalo con cuidado.
 
 d3.obj = Recoge lena seca. Las noches se vuelven mas frescas.
 d3.diary = DIA 3\n\nEl aire esta mas fresco hoy.\nRecoger lena ahora parece necesario.
+d3.progress = Recoge lena
 
 d4.obj = Busca y recoge flores silvestres.\nAlegraran la cabana.
 d4.diary = DIA 4\n\nLa niebla esta un poco mas espesa esta manana.\nAun asi, las flores son hermosas.
+d4.progress = Recoge flores
 
 d5.obj = Busca en la parte oeste del valle algo util.
 d5.diary = DIA 5\n\nLos dias empiezan a mezclarse.\nDeberia buscar algo que pueda ayudar.
@@ -33,6 +55,7 @@ d5.search = Busca algo util en el bosque oeste.
 
 d6.obj = Recoge piedras para reforzar el area de la cabana.
 d6.diary = DIA 6\n\nLa niebla permanece mas tiempo cada manana.\nSiento una necesidad tranquila de hacer el lugar mas solido.
+d6.progress = Recoge piedras
 
 d7.obj = Busca hierbas raras mas profundo en el bosque.
 d7.diary = DIA 7\n\nMi cuerpo se siente mas pesado.\nNecesito algo que ayude con el cansancio creciente.

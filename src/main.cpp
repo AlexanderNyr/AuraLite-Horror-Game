@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
     SDL_SetMainReady();
 #endif
     // Initialize SDL2
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS | SDL_INIT_AUDIO) < 0) {
         std::cerr << "SDL could not initialize! SDL_Error: " << SDL_GetError() << std::endl;
         return -1;
     }
@@ -33,13 +33,18 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 #else
-    // Windows/Desktop - use standard core OpenGL 4.6
+    // Windows/Desktop - use standard core OpenGL 4.5
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    // Force a visible framebuffer format for software/headless renderers
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
 
     // Adapt screen settings based on Android vs Desktop
     bool isMobile = false;
@@ -56,7 +61,7 @@ int main(int argc, char* argv[]) {
 
     // Create SDL window
     SDL_Window* window = SDL_CreateWindow(
-        "Aura Valley - A Quiet Stay",
+        "AnxietyHorror",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         width,
@@ -78,6 +83,7 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return -1;
     }
+    SDL_GL_MakeCurrent(window, glContext);
 
     // Retrieve active frame buffer dimensions
     SDL_GL_GetDrawableSize(window, &width, &height);
@@ -95,7 +101,10 @@ int main(int argc, char* argv[]) {
     SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
 
-    // Setup viewport
+    // Setup viewport; try adaptive/regular vsync, fall back to immediate for headless/software GL
+    if (SDL_GL_SetSwapInterval(-1) == -1 && SDL_GL_SetSwapInterval(1) == -1) {
+        SDL_GL_SetSwapInterval(0);
+    }
     glViewport(0, 0, width, height);
 
     // Initialize Game engine and Audio

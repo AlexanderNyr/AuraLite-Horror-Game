@@ -1,17 +1,37 @@
-# Aura Valley - 9 Days (English)
+# AnxietyHorror - 9 Days (English)
 
 language.code = en
 language.name = English
 
-menu.title = AURA VALLEY
+menu.title = AnxietyHorror
 menu.subtitle = Nine quiet days in the mist
 menu.start = Press ENTER / ACTION to begin your stay
-menu.controls = WASD move | Mouse look | Shift faster | E interact | F lantern
+menu.controls = WASD / Up-Down navigate | Enter select
+menu.continue = Continue
+menu.newgame = New Game
+menu.settings = Settings
+menu.exit = Exit
+
+settings.title = Settings
+settings.language = Language
+settings.sensitivity = Mouse Sensitivity
+settings.viewdistance = View Distance
+settings.back = Back
+settings.controls = WASD / Arrows navigate | Left-Right adjust | Enter back
 
 intro.prompt = Press ACTION to continue...
 
 end.title = The Valley Remembers
 end.text = After nine days the fog feels\nlike an old friend.\nYou leave the valley changed,\nbut at peace.
+
+gameover.title = The Fog Took You
+gameover.text = Something in the mist found you.\nTry to stay farther from the shadows.
+gameover.restart = Press ACTION to return to menu
+
+weather.clear = Clear
+weather.rain = Rain
+weather.snow = Snow
+weather.foggy = Fog
 
 d1.obj = Explore the valley slowly.\nReturn to cabin when ready.
 d1.diary = DAY 1\n\nThe valley welcomes me quietly.\nI think I will stay for some time.\nEverything feels still and gentle.
@@ -23,9 +43,11 @@ d2.check = Go to the well and inspect it carefully.
 
 d3.obj = Gather dry firewood. The evenings are getting cooler.
 d3.diary = DAY 3\n\nThe air is cooler today.\nCollecting wood feels necessary now.
+d3.progress = Collect firewood
 
 d4.obj = Find and collect wildflowers.\nThey will brighten the cabin.
 d4.diary = DAY 4\n\nThe fog is a little thicker this morning.\nStill, the flowers are beautiful.
+d4.progress = Gather flowers
 
 d5.obj = Search the western part of the valley for useful items.
 d5.diary = DAY 5\n\nThe days are blending together.\nI should look for anything that might help.
@@ -33,6 +55,7 @@ d5.search = Search the western woods for something useful.
 
 d6.obj = Collect stones to reinforce the cabin area.
 d6.diary = DAY 6\n\nThe fog lingers longer each morning.\nI feel a quiet need to make the place more solid.
+d6.progress = Collect stones
 
 d7.obj = Look for rare herbs deeper in the woods.
 d7.diary = DAY 7\n\nMy body feels heavier.\nI need something to help with the growing tiredness.

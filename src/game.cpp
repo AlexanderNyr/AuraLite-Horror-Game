@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 #include <cmath>
 #include <algorithm>
 
@@ -12,7 +13,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AuraLite", __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AnxietyHorror", __VA_ARGS__)
 #else
 #define LOGI(...) printf(__VA_ARGS__); printf("\n")
 #endif
@@ -56,6 +57,7 @@ void Game::saveProgress() {
 void Game::loadProgress() {
     SaveData data;
     if (SaveSystem::loadGame(data)) {
+        if (data.currentDay < 1 || data.currentDay > 9) data.currentDay = 1;
         currentDay = data.currentDay;
         wellRepaired = data.wellRepaired;
         logsCollected = data.logsCollected;
@@ -67,11 +69,48 @@ void Game::loadProgress() {
     }
 }
 
+void Game::loadSettings() {
+    if (SettingsSystem::loadSettings(settings)) {
+        applySettings();
+    } else {
+        // Default settings match current defaults
+        settings.languageIndex = 0;
+        settings.mouseSensitivity = 0.005f;
+        settings.viewDistance = 1.0f;
+        applySettings();
+    }
+}
+
+void Game::saveSettings() {
+    SettingsSystem::saveSettings(settings);
+}
+
+void Game::applySettings() {
+    settings.sanitize();
+
+    // Language
+    if (settings.languageIndex == 0) loc.loadLanguage("en");
+    else if (settings.languageIndex == 1) loc.loadLanguage("ru");
+    else if (settings.languageIndex == 2) loc.loadLanguage("es");
+
+    // Mouse sensitivity
+    camera.mouseSensitivity = settings.mouseSensitivity;
+
+    // View distance multiplier affects fogEnd base used in setupDaySettings
+    // We recompute current day fog if we are already in a day
+    if (currentDay >= 1 && currentDay <= 9) {
+        float dayProgress = (currentDay - 1) / 8.0f;
+        fogStart = (280.0f - dayProgress * 160.0f) * settings.viewDistance;
+        fogEnd   = (780.0f - dayProgress * 320.0f) * settings.viewDistance;
+    }
+}
+
 void Game::init(int width, int height, bool mobileMode) {
     screenWidth = width;
     screenHeight = height;
     isAndroid = mobileMode;
     loc.init("lang");
+    loadSettings();
 
     // === Improved Shaders with better lighting ===
     std::string vert3D = R"glsl(
@@ -210,6 +249,7 @@ void Game::init(int width, int height, bool mobileMode) {
     pathMesh.upload();
 
     generateVillage();
+    buildColliders();
 
     // Billboard quad
     billboardQuad.vertices = {
@@ -225,6 +265,20 @@ void Game::init(int width, int height, bool mobileMode) {
     float flC[4]={0.85,0.45,0.65,1}; generateBox(flowerMesh,{0.5,0.7,0.5},{0,0,0},flC); flowerMesh.upload();
     float stC[4]={0.5,0.48,0.45,1}; generateBox(stoneMesh,{0.6,0.42,0.6},{0,0,0},stC); stoneMesh.upload();
     float tlC[4]={0.6,0.55,0.45,1}; generateBox(toolMesh,{0.32,1.6,0.32},{0,0,0},tlC); toolMesh.upload();
+
+    float enC[4]={0.05,0.05,0.06,1}; generateBox(enemyMesh,{1.0,2.2,0.5},{0,1.1f,0},enC); enemyMesh.upload();
+    float ghC[4]={0.85,0.85,0.9,0.45}; generateCone(ghostMesh,0.7f,2.0f,8,{0,0,0},ghC); ghostMesh.upload();
+
+    // Weather particle systems
+    rainParticles.resize(RAIN_PARTICLE_COUNT);
+    snowParticles.resize(SNOW_PARTICLE_COUNT);
+    for (int i = 0; i < RAIN_PARTICLE_COUNT; ++i) {
+        rainParticles[i] = {randFloat()*80 - 40, randFloat()*40 + 10, randFloat()*80 - 40};
+    }
+    for (int i = 0; i < SNOW_PARTICLE_COUNT; ++i) {
+        snowParticles[i] = {randFloat()*80 - 40, randFloat()*40 + 10, randFloat()*80 - 40};
+    }
+    buildWeatherMeshes();
 
     ui.init(screenWidth, screenHeight);
     updateTouchLayout();
@@ -260,6 +314,7 @@ void Game::resetPlayer() {
     camera.pitch = 0.0f;
     camera.updateCameraVectors();
     stamina = 1.0f; isSprinting = false;
+    fear = 0.0f;
 }
 
 void Game::generateVillage() {
@@ -281,6 +336,227 @@ void Game::generateVillage() {
     // Fences around village
     villageObjects.push_back({{-55, getTerrainHeight(-55,-45), -45}, 2, 1.0f});
     villageObjects.push_back({{38, getTerrainHeight(38,-42), -42}, 2, 1.0f});
+}
+
+void Game::buildColliders() {
+    aabbColliders.clear();
+    circleColliders.clear();
+
+    // Cabin: 12x10 footprint, 6.2 high
+    aabbColliders.push_back({ Vec3(-5.8f, 0.0f, -4.8f), Vec3(5.8f, 6.2f, 4.8f) });
+
+    // Well
+    Vec3 wellPos = {-20.0f, getTerrainHeight(-20.0f, -50.0f), -50.0f};
+    circleColliders.push_back({ wellPos, 3.0f });
+
+    // Car
+    Vec3 carPos = {12.0f, getTerrainHeight(12.0f, 78.0f), 78.0f};
+    aabbColliders.push_back({ carPos + Vec3(-2.6f, 0.0f, -5.2f), carPos + Vec3(2.6f, 2.6f, 5.2f) });
+
+    // Village houses, fences and rocks
+    for (const auto& obj : villageObjects) {
+        if (obj.type == 0) {
+            // House body: 7.0 x 5.5 x 8.5, add a little margin
+            aabbColliders.push_back({ obj.pos + Vec3(-3.6f, 0.0f, -4.4f), obj.pos + Vec3(3.6f, 5.7f, 4.4f) });
+        } else if (obj.type == 1) {
+            // Rocks
+            circleColliders.push_back({ obj.pos, 1.5f * obj.scale });
+        } else if (obj.type == 2) {
+            // Fence segment: ~12.0 x 0.2 x 1.6
+            aabbColliders.push_back({ obj.pos + Vec3(-6.2f, 0.0f, -0.2f), obj.pos + Vec3(6.2f, 1.7f, 0.2f) });
+        }
+    }
+
+    // Trees
+    for (const auto& pos : treePositions) {
+        circleColliders.push_back({ pos, 1.2f });
+    }
+}
+
+bool Game::collidesAt(const Vec3& pos, float radius) const {
+    float yBottom = pos.y - PLAYER_HEIGHT * 0.5f;
+    float yTop    = pos.y + PLAYER_HEIGHT * 0.5f;
+
+    for (const auto& box : aabbColliders) {
+        if (box.min.y > yTop || box.max.y < yBottom) continue;
+        if (box.intersectsSphere(pos, radius)) return true;
+    }
+
+    for (const auto& c : circleColliders) {
+        if (std::fabs(pos.y - c.center.y) > 3.0f) continue;
+        float dx = pos.x - c.center.x;
+        float dz = pos.z - c.center.z;
+        if (std::sqrt(dx*dx + dz*dz) < c.radius + radius) return true;
+    }
+
+    return false;
+}
+
+Vec3 Game::resolveCollisions(const Vec3& oldPos, const Vec3& newPos) const {
+    Vec3 result = newPos;
+    result.x = clamp(result.x, -160.0f, 160.0f);
+    result.z = clamp(result.z, -160.0f, 160.0f);
+
+    // Keep the same height for horizontal collision tests; terrain height is applied afterwards
+    Vec3 testPos = result;
+    testPos.y = oldPos.y;
+
+    // Try X movement alone
+    Vec3 onlyX = testPos;
+    onlyX.z = oldPos.z;
+    if (collidesAt(onlyX, PLAYER_RADIUS)) {
+        result.x = oldPos.x;
+    }
+
+    // Try Z movement from the (possibly adjusted) X position
+    Vec3 onlyZ = result;
+    onlyZ.y = oldPos.y;
+    onlyZ.z = newPos.z;
+    if (collidesAt(onlyZ, PLAYER_RADIUS)) {
+        result.z = oldPos.z;
+    }
+
+    return result;
+}
+
+void Game::spawnEnemies() {
+    enemies.clear();
+
+    // More enemies and more ghosts as days progress
+    int shadowCount = std::max(0, currentDay - 2);
+    int ghostCount  = std::max(0, currentDay - 4);
+
+    lcg_seed = (uint32_t)(currentDay * 1234567 + 42);
+
+    for (int i = 0; i < shadowCount; ++i) {
+        float x = randFloat() * 240.0f - 120.0f;
+        float z = randFloat() * 240.0f - 120.0f;
+        if (std::sqrt(x*x + z*z) < 30.0f) continue; // not too close to cabin
+        Enemy e;
+        e.pos = {x, getTerrainHeight(x,z), z};
+        e.target = e.pos;
+        e.type = 0;
+        e.speed = 1.2f + randFloat() * 0.6f;
+        e.active = true;
+        enemies.push_back(e);
+    }
+
+    for (int i = 0; i < ghostCount; ++i) {
+        float x = randFloat() * 260.0f - 130.0f;
+        float z = randFloat() * 260.0f - 130.0f;
+        if (std::sqrt(x*x + z*z) < 40.0f) continue;
+        Enemy e;
+        e.pos = {x, getTerrainHeight(x,z) + 0.5f, z};
+        e.target = e.pos;
+        e.type = 1;
+        e.speed = 1.6f + randFloat() * 0.8f;
+        e.active = true;
+        e.opacity = 0.0f;
+        enemies.push_back(e);
+    }
+}
+
+void Game::updateEnemies(float dt) {
+    // Fear regenerates slowly when no enemy is close
+    bool fearSource = false;
+
+    for (auto& e : enemies) {
+        if (!e.active) continue;
+        e.stateTimer += dt;
+
+        float distToPlayer = (e.pos - camera.position).length();
+        bool canSeePlayer = distToPlayer < (e.type == 0 ? 80.0f : 120.0f);
+
+        if (canSeePlayer) {
+            e.target = camera.position;
+        } else if ((e.pos - e.target).length() < 2.0f || e.stateTimer > 6.0f) {
+            // Pick a new random wander target
+            e.target.x = e.pos.x + (randFloat() - 0.5f) * 60.0f;
+            e.target.z = e.pos.z + (randFloat() - 0.5f) * 60.0f;
+            e.target.y = getTerrainHeight(e.target.x, e.target.z);
+            e.stateTimer = 0.0f;
+        }
+
+        Vec3 dir = e.target - e.pos;
+        dir.y = 0.0f;
+        float d = dir.length();
+        if (d > 0.1f) {
+            dir = dir / d;
+            Vec3 newPos = e.pos + dir * e.speed * dt;
+            newPos.y = getTerrainHeight(newPos.x, newPos.z) + (e.type == 0 ? 0.0f : 0.5f);
+            e.pos = newPos;
+        }
+
+        // Ghost fade in/out based on distance
+        if (e.type == 1) {
+            float targetOpacity = 0.0f;
+            if (distToPlayer < 60.0f) targetOpacity = 0.5f;
+            if (distToPlayer < 25.0f) targetOpacity = 0.85f;
+            e.opacity += (targetOpacity - e.opacity) * dt * 2.0f;
+        } else {
+            e.opacity = 1.0f;
+        }
+
+        // Fear accumulation
+        if (distToPlayer < 4.0f) {
+            fear += dt * 0.35f;
+            fearSource = true;
+        } else if (distToPlayer < 8.0f) {
+            fear += dt * 0.08f;
+            fearSource = true;
+        }
+    }
+
+    if (!fearSource) {
+        fear -= dt * 0.06f;
+    }
+    fear = clamp(fear, 0.0f, 1.0f);
+
+    if (fear >= 1.0f) {
+        state = STATE_ENDING; // reuse ending state with game over text
+        stateTimer = 0.0f;
+    }
+}
+
+void Game::renderEnemies() {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    for (const auto& e : enemies) {
+        if (!e.active) continue;
+        if (!frustum.isSphereInside(e.pos, 3.0f)) continue;
+
+        float dist = (e.pos - camera.position).length();
+        if (dist > fogEnd * 1.2f) continue; // hidden by fog
+
+        if (e.type == 0) {
+            // Shadow: dark opaque box
+            Mat4 m = Mat4::translation(e.pos);
+            mainShader.setMat4("model", m);
+            mainShader.setInt("useTexture", 0);
+            enemyMesh.draw();
+        } else {
+            // Ghost: translucent cone, billboard-ish alpha
+            Mat4 m = Mat4::translation(e.pos) * Mat4::scaling({0.9f});
+            mainShader.setMat4("model", m);
+            mainShader.setInt("useTexture", 0);
+            ghostMesh.draw();
+        }
+    }
+
+    glDisable(GL_BLEND);
+}
+
+void Game::renderGameOver() {
+    float dk[4] = {0.01f, 0.01f, 0.015f, 1.0f};
+    ui.drawRect(0, 0, screenWidth, screenHeight, dk);
+    float t[4] = {0.85f, 0.25f, 0.25f, 1.0f};
+    ui.drawText(loc.tr("gameover.title", "The Fog Took You"), screenWidth*0.5f - 220, screenHeight*0.35f, 3.2f, t);
+    float txt[4] = {0.75f, 0.72f, 0.68f, 1.0f};
+    ui.drawText(loc.tr("gameover.text", "Something in the mist found you.\nTry to stay farther from the shadows."),
+                screenWidth*0.18f, screenHeight*0.55f, 1.5f, txt);
+    float pr[4] = {0.6f, 0.62f, 0.58f, 0.85f + sin(stateTimer*2.5f)*0.15f};
+    ui.drawText(loc.tr("gameover.restart", "Press ACTION to return to menu"), screenWidth*0.18f, screenHeight*0.82f, 1.35f, pr);
 }
 
 void Game::spawnCollectibles() {
@@ -317,64 +593,69 @@ void Game::setupDaySettings() {
     float dayProgress = (currentDay - 1) / 8.0f;
 
     fogDensity = 0.6f + dayProgress * 1.45f;
-    fogStart = 280.0f - dayProgress * 160.0f;
-    fogEnd = 780.0f - dayProgress * 320.0f;
+    fogStart = (280.0f - dayProgress * 160.0f) * settings.viewDistance;
+    fogEnd = (780.0f - dayProgress * 320.0f) * settings.viewDistance;
     fatigue = dayProgress * 0.58f;
 
     if (currentDay == 1) {
-        ambientColor = {0.38f,0.41f,0.35f}; dirLightColor = {1.0f,0.97f,0.88f};
-        dirLightDir = {0.5f,-0.7f,-0.4f}; fogColor = {0.84f,0.9f,0.94f};
+        baseAmbientColor = {0.38f,0.41f,0.35f}; baseDirLightColor = {1.0f,0.97f,0.88f};
+        dirLightDir = {0.5f,-0.7f,-0.4f}; baseFogColor = {0.84f,0.9f,0.94f};
         objectiveText = loc.tr("d1.obj", "Explore the open valley and the nearby village.");
         diaryText = loc.tr("d1.diary", "DAY 1\n\nThe valley opens up before me.\nThere seems to be an old village nearby.\nI feel like staying here for a while.");
     }
     else if (currentDay == 2) {
-        ambientColor = {0.3f,0.34f,0.37f}; dirLightColor = {0.87f,0.9f,0.97f};
-        dirLightDir = {0.33f,-0.85f,-0.24f}; fogColor = {0.77f,0.84f,0.9f};
+        baseAmbientColor = {0.3f,0.34f,0.37f}; baseDirLightColor = {0.87f,0.9f,0.97f};
+        dirLightDir = {0.33f,-0.85f,-0.24f}; baseFogColor = {0.77f,0.84f,0.9f};
         objectiveText = loc.tr("d2.obj", "Visit the old well near the village.");
         diaryText = loc.tr("d2.diary", "DAY 2\n\nThe village feels abandoned but peaceful.\nThe well might still be usable.");
     }
     else if (currentDay == 3) {
-        ambientColor = {0.24f,0.28f,0.26f}; dirLightColor = {0.94f,0.87f,0.78f};
-        dirLightDir = {0.57f,-0.67f,-0.37f}; fogColor = {0.8f,0.84f,0.77f};
+        baseAmbientColor = {0.24f,0.28f,0.26f}; baseDirLightColor = {0.94f,0.87f,0.78f};
+        dirLightDir = {0.57f,-0.67f,-0.37f}; baseFogColor = {0.8f,0.84f,0.77f};
         objectiveText = loc.tr("d3.obj", "Gather firewood from the edges of the forest.");
         diaryText = loc.tr("d3.diary", "DAY 3\n\nThe evenings are getting colder.\nI should collect some wood.");
     }
     else if (currentDay == 4) {
-        ambientColor = {0.2f,0.24f,0.27f}; dirLightColor = {0.79f,0.83f,0.92f};
-        dirLightDir = {0.24f,-0.89f,-0.14f}; fogColor = {0.67f,0.74f,0.8f};
+        baseAmbientColor = {0.2f,0.24f,0.27f}; baseDirLightColor = {0.79f,0.83f,0.92f};
+        dirLightDir = {0.24f,-0.89f,-0.14f}; baseFogColor = {0.67f,0.74f,0.8f};
         objectiveText = loc.tr("d4.obj", "Collect wildflowers growing near the village.");
         diaryText = loc.tr("d4.diary", "DAY 4\n\nThe fog is thicker today.\nThe flowers still bring some color to this place.");
     }
     else if (currentDay == 5) {
-        ambientColor = {0.17f,0.21f,0.24f}; dirLightColor = {0.73f,0.77f,0.86f};
-        dirLightDir = {0.36f,-0.81f,-0.29f}; fogColor = {0.59f,0.65f,0.72f};
+        baseAmbientColor = {0.17f,0.21f,0.24f}; baseDirLightColor = {0.73f,0.77f,0.86f};
+        dirLightDir = {0.36f,-0.81f,-0.29f}; baseFogColor = {0.59f,0.65f,0.72f};
         objectiveText = loc.tr("d5.obj", "Search the area west of the village for useful tools.");
         diaryText = loc.tr("d5.diary", "DAY 5\n\nI should look around the old houses.\nThere might be something left behind.");
     }
     else if (currentDay == 6) {
-        ambientColor = {0.14f,0.18f,0.21f}; dirLightColor = {0.63f,0.68f,0.77f};
-        dirLightDir = {0.29f,-0.84f,-0.22f}; fogColor = {0.53f,0.58f,0.64f};
+        baseAmbientColor = {0.14f,0.18f,0.21f}; baseDirLightColor = {0.63f,0.68f,0.77f};
+        dirLightDir = {0.29f,-0.84f,-0.22f}; baseFogColor = {0.53f,0.58f,0.64f};
         objectiveText = loc.tr("d6.obj", "Collect stones to reinforce paths around the cabin.");
         diaryText = loc.tr("d6.diary", "DAY 6\n\nThe fog stays longer every day.\nMaking the paths clearer would help.");
     }
     else if (currentDay == 7) {
-        ambientColor = {0.12f,0.15f,0.18f}; dirLightColor = {0.56f,0.61f,0.71f};
-        dirLightDir = {0.38f,-0.82f,-0.26f}; fogColor = {0.46f,0.51f,0.57f};
+        baseAmbientColor = {0.12f,0.15f,0.18f}; baseDirLightColor = {0.56f,0.61f,0.71f};
+        dirLightDir = {0.38f,-0.82f,-0.26f}; baseFogColor = {0.46f,0.51f,0.57f};
         objectiveText = loc.tr("d7.obj", "Find rare herbs in the deeper parts of the woods.");
         diaryText = loc.tr("d7.diary", "DAY 7\n\nI feel more tired with each passing day.\nSome herbs might help.");
     }
     else if (currentDay == 8) {
-        ambientColor = {0.1f,0.13f,0.16f}; dirLightColor = {0.49f,0.54f,0.63f};
-        dirLightDir = {0.26f,-0.87f,-0.19f}; fogColor = {0.41f,0.45f,0.51f};
+        baseAmbientColor = {0.1f,0.13f,0.16f}; baseDirLightColor = {0.49f,0.54f,0.63f};
+        dirLightDir = {0.26f,-0.87f,-0.19f}; baseFogColor = {0.41f,0.45f,0.51f};
         objectiveText = loc.tr("d8.obj", "Finish collecting everything needed.");
         diaryText = loc.tr("d8.diary", "DAY 8\n\nThe valley feels more distant.\nI need to complete my tasks.");
     }
     else if (currentDay == 9) {
-        ambientColor = {0.09f,0.11f,0.14f}; dirLightColor = {0.43f,0.48f,0.56f};
-        dirLightDir = {0.31f,-0.84f,-0.23f}; fogColor = {0.36f,0.39f,0.45f};
+        baseAmbientColor = {0.09f,0.11f,0.14f}; baseDirLightColor = {0.43f,0.48f,0.56f};
+        dirLightDir = {0.31f,-0.84f,-0.23f}; baseFogColor = {0.36f,0.39f,0.45f};
         objectiveText = loc.tr("d9.obj", "Return to the cabin. Your journey is ending.");
         diaryText = loc.tr("d9.diary", "DAY 9\n\nAfter nine days the valley feels\nboth familiar and strangely quiet.\nIt is time to leave.");
     }
+
+    timeOfDay = 8.0f; // each day starts at morning
+    spawnEnemies();
+    setupWeather();
+    applyTimeOfDay();
 }
 
 void Game::handleEvent(void* e) {
@@ -396,9 +677,11 @@ void Game::handleEvent(void* e) {
     } else if (ev->type == SDL_FINGERDOWN) {
         float fx = ev->tfinger.x * screenWidth, fy = ev->tfinger.y * screenHeight;
         long long id = ev->tfinger.fingerId;
-        if (fx > screenWidth-150 && fx < screenWidth-30 && fy > 95 && fy < 215)
+        // Flashlight button (top-right)
+        if (fx > screenWidth-150 && fx < screenWidth-40 && fy > 95 && fy < 205)
             flashlightTogglePressed = true;
-        else if (fx > screenWidth-170 && fx < screenWidth-50 && fy > screenHeight-330 && fy < screenHeight-210)
+        // Action button (bottom-right)
+        else if (fx > screenWidth-150 && fx < screenWidth-40 && fy > screenHeight-310 && fy < screenHeight-200)
             actionPressed = true;
         else if (fx < screenWidth * 0.5f) { walkTouchId = id; activeJoyX = fx; activeJoyY = fy; }
         else { lookTouchId = id; lastTouchCamX = fx; lastTouchCamY = fy; }
@@ -438,25 +721,11 @@ void Game::update(float dt) {
     if (languageCyclePressed) { loc.cycleLanguage(); languageCyclePressed = false; }
 
     if (state == STATE_MENU) {
-        if (newGameRequested) {
-            newGameRequested = false;
-            currentDay = 1;
-            setupDaySettings();
-            resetPlayer();
-            syncCollectiblesWithSave();
-            saveProgress();
-            state = STATE_INTRO;
-            fadeAlpha = 1.0f;
-            audio.playSound("intro");
-        } else if (actionPressed) {
-            actionPressed = false;
-            setupDaySettings();
-            resetPlayer();
-            syncCollectiblesWithSave();
-            state = STATE_INTRO;
-            fadeAlpha = 1.0f;
-            audio.playSound("intro");
-        }
+        updateMenu(dt);
+        return;
+    }
+    if (state == STATE_MENU_SETTINGS) {
+        updateSettings(dt);
         return;
     }
     if (state == STATE_INTRO) {
@@ -494,18 +763,27 @@ void Game::update(float dt) {
                   (mMove && jd > leftRadius*0.78f)) && stamina > 0.12f;
     camera.movementSpeed = isSprinting ? 7.2f : 4.1f;
 
-    if (keys[SDL_SCANCODE_W]) camera.processKeyboard(1, dt);
-    if (keys[SDL_SCANCODE_S]) camera.processKeyboard(2, dt);
-    if (keys[SDL_SCANCODE_A]) camera.processKeyboard(3, dt);
-    if (keys[SDL_SCANCODE_D]) camera.processKeyboard(4, dt);
+    // Build horizontal movement vector from keyboard and/or virtual joystick
+    Vec3 moveDir(0.0f, 0.0f, 0.0f);
+    Vec3 hf = {camera.front.x, 0.0f, camera.front.z}; hf = hf.normalized();
+    Vec3 hr = {camera.right.x, 0.0f, camera.right.z}; hr = hr.normalized();
+
+    if (keys[SDL_SCANCODE_W]) moveDir += hf;
+    if (keys[SDL_SCANCODE_S]) moveDir -= hf;
+    if (keys[SDL_SCANCODE_A]) moveDir -= hr;
+    if (keys[SDL_SCANCODE_D]) moveDir += hr;
 
     if (mMove) {
-        float vx = jx/jd, vy = jy/jd;
-        float vel = camera.movementSpeed * dt;
-        Vec3 hf = {camera.front.x, 0, camera.front.z}; hf = hf.normalized();
-        Vec3 hr = {camera.right.x, 0, camera.right.z}; hr = hr.normalized();
-        camera.position -= hf * vy * vel;
-        camera.position += hr * vx * vel;
+        float vx = jx / jd, vy = jy / jd;
+        moveDir -= hf * vy;
+        moveDir += hr * vx;
+    }
+
+    if (moveDir.length() > 0.0001f) {
+        moveDir = moveDir.normalized();
+        Vec3 newPos = camera.position + moveDir * camera.movementSpeed * dt;
+        newPos = resolveCollisions(camera.position, newPos);
+        camera.position = newPos;
     }
 
     float fatiguePenalty = fatigue * 0.38f;
@@ -521,6 +799,14 @@ void Game::update(float dt) {
         flashlightTogglePressed = false;
     }
     flashlightIntensity = flashlightOn ? 0.85f : 0;
+
+    // Time of day and weather progression
+    timeOfDay += dt * timeScale;
+    if (timeOfDay >= 24.0f) timeOfDay -= 24.0f;
+    applyTimeOfDay();
+    updateWeather(dt);
+
+    updateEnemies(dt);
 
     float dCabin = sqrt(camera.position.x*camera.position.x + camera.position.z*camera.position.z);
 
@@ -540,14 +826,14 @@ void Game::update(float dt) {
         for (auto& l : woodLogs) if (!l.collected && (camera.position - l.pos).length() < 3.3f && interact) {
             l.collected = true; logsCollected++; audio.playSound("pickup"); saveProgress();
         }
-        if (logsCollected < 3) objectiveText = "Collect firewood (" + std::to_string(logsCollected) + "/3)";
+        if (logsCollected < 3) objectiveText = loc.tr("d3.progress", "Collect firewood") + " (" + std::to_string(logsCollected) + "/3)";
         else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 4) {
         for (auto& f : flowers) if (!f.collected && (camera.position - f.pos).length() < 2.9f && interact) {
             f.collected = true; flowersCollected++; audio.playSound("pickup"); saveProgress();
         }
-        if (flowersCollected < 8) objectiveText = "Gather flowers (" + std::to_string(flowersCollected) + "/8)";
+        if (flowersCollected < 8) objectiveText = loc.tr("d4.progress", "Gather flowers") + " (" + std::to_string(flowersCollected) + "/8)";
         else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 5) {
@@ -561,7 +847,7 @@ void Game::update(float dt) {
         for (auto& s : stones) if (!s.collected && (camera.position - s.pos).length() < 3.1f && interact) {
             s.collected = true; stonesCollected++; audio.playSound("pickup"); saveProgress();
         }
-        if (stonesCollected < 6) objectiveText = "Collect stones (" + std::to_string(stonesCollected) + "/6)";
+        if (stonesCollected < 6) objectiveText = loc.tr("d6.progress", "Collect stones") + " (" + std::to_string(stonesCollected) + "/6)";
         else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 7) {
@@ -605,18 +891,11 @@ void Game::render() {
     glEnable(GL_DEPTH_TEST);
 
     if (state == STATE_MENU) {
-        float bg[4] = {0.05f,0.06f,0.08f,1};
-        ui.drawRect(0,0,screenWidth,screenHeight,bg);
-        float t[4]={0.94f,0.96f,0.9f,1}, s[4]={0.77f,0.8f,0.74f,1};
-        ui.drawText(loc.tr("menu.title","AURA VALLEY"), screenWidth*0.1f, screenHeight*0.16f, 4.4f, t);
-        ui.drawText(loc.tr("menu.subtitle","Nine days in an open valley"), screenWidth*0.105f, screenHeight*0.3f, 1.8f, s);
-        
-        if (SaveSystem::hasSaveGame()) {
-            std::stringstream ss; ss << "Press ENTER to continue (Day " << currentDay << ") | Press N for New Game";
-            ui.drawText(ss.str(), screenWidth*0.1f, screenHeight*0.56f, 1.5f, s);
-        } else {
-            ui.drawText(loc.tr("menu.start","Press ENTER to begin"), screenWidth*0.1f, screenHeight*0.56f, 1.6f, s);
-        }
+        renderMenu();
+        return;
+    }
+    if (state == STATE_MENU_SETTINGS) {
+        renderSettings();
         return;
     }
 
@@ -631,12 +910,17 @@ void Game::render() {
     }
 
     if (state == STATE_ENDING) {
-        float dk[4]={0.02f,0.025f,0.03f,1};
-        ui.drawRect(0,0,screenWidth,screenHeight,dk);
-        float gd[4]={0.95f,0.92f,0.8f,1};
-        ui.drawText(loc.tr("end.title","The Valley Remembers"), screenWidth*0.5f-160, screenHeight*0.28f, 3.2f, gd);
-        ui.drawText(loc.tr("end.text","After nine days the valley feels\nboth familiar and strangely quiet.\nYou leave changed, but at peace."),
-                    screenWidth*0.16f, screenHeight*0.45f, 1.55f, {0.87f,0.89f,0.83f,1});
+        if (fear >= 0.99f) {
+            renderGameOver();
+        } else {
+            float dk[4]={0.02f,0.025f,0.03f,1};
+            ui.drawRect(0,0,screenWidth,screenHeight,dk);
+            float gd[4]={0.95f,0.92f,0.8f,1};
+            ui.drawText(loc.tr("end.title","The Valley Remembers"), screenWidth*0.5f-160, screenHeight*0.28f, 3.2f, gd);
+            float endTextColor[4] = {0.87f, 0.89f, 0.83f, 1.0f};
+            ui.drawText(loc.tr("end.text","After nine days the valley feels\nboth familiar and strangely quiet.\nYou leave changed, but at peace."),
+                        screenWidth*0.16f, screenHeight*0.45f, 1.55f, endTextColor);
+        }
         return;
     }
 
@@ -757,6 +1041,12 @@ void Game::render() {
         toolMesh.draw();
     }
 
+    // Enemies
+    renderEnemies();
+
+    // Weather particles
+    renderWeather();
+
     // Billboards
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -775,6 +1065,18 @@ void Game::render() {
     float tc[4] = {0.96f,0.97f,0.93f,1};
     std::stringstream ds; ds << "Day " << currentDay << " / 9";
     ui.drawText(ds.str(), 22, 22, 2.1f, tc);
+
+    // Time and weather display
+    int hours = (int)timeOfDay;
+    int mins = (int)((timeOfDay - hours) * 60.0f);
+    std::stringstream ts;
+    ts << (hours < 10 ? "0" : "") << hours << ":" << (mins < 10 ? "0" : "") << mins;
+    ui.drawText(ts.str(), screenWidth - 110, 22, 1.5f, tc);
+
+    const char* weatherNames[4] = {"weather.clear", "weather.rain", "weather.snow", "weather.foggy"};
+    const char* weatherFallbacks[4] = {"Clear", "Rain", "Snow", "Fog"};
+    ui.drawText(loc.tr(weatherNames[weather], weatherFallbacks[weather]), screenWidth - 110, 44, 1.2f, tc);
+
     ui.drawText(objectiveText, 22, 58, 1.2f, tc);
 
     // Stamina + Fatigue
@@ -788,15 +1090,27 @@ void Game::render() {
         ui.drawRect(22, screenHeight-58, 195*fatigue, 4, fatCol);
     }
 
+    // Fear bar (appears when enemies are active)
+    if (currentDay >= 3 && fear > 0.01f) {
+        float fbg[4] = {0.07f,0.07f,0.07f,0.55f};
+        ui.drawRect(22, screenHeight-74, 195, 8, fbg);
+        float fCol[4] = {0.85f, 0.18f, 0.18f, 0.85f};
+        ui.drawRect(26, screenHeight-72, 187*fear, 4, fCol);
+    }
+
     if (currentDay >= 5) {
-        float lc[4] = flashlightOn ? 
-            (float[4]){0.9f,0.86f,0.52f,0.82f} : (float[4]){0.32f,0.32f,0.32f,0.5f};
+        float lc[4];
+        if (flashlightOn) {
+            lc[0] = 0.9f; lc[1] = 0.86f; lc[2] = 0.52f; lc[3] = 0.82f;
+        } else {
+            lc[0] = 0.32f; lc[1] = 0.32f; lc[2] = 0.32f; lc[3] = 0.5f;
+        }
         ui.drawRect(screenWidth-155, 88, 108, 36, lc);
     }
 
     ui.drawVirtualJoysticks(leftJoyX, leftJoyY, leftRadius, activeJoyX, activeJoyY,
                             rightJoyX, rightJoyY, rightRadius, activeCamX, activeCamY,
-                            isAndroid, "ACTION");
+                            isAndroid, flashlightOn, "ACTION");
 
     if (state == STATE_SLEEP_FADE) {
         float blk[4] = {0,0,0,fadeAlpha};
@@ -823,5 +1137,381 @@ void Game::cleanup() {
     flowerMesh.cleanup();
     stoneMesh.cleanup();
     toolMesh.cleanup();
+    enemyMesh.cleanup();
+    ghostMesh.cleanup();
+    rainMesh.cleanup();
+    snowMesh.cleanup();
     ui.cleanup();
+}
+
+// ==================== WEATHER & TIME OF DAY ====================
+
+void Game::buildWeatherMeshes() {
+    // Rain: line segments
+    rainMesh.vertices.clear();
+    rainMesh.indices.clear();
+    float rainColor[4] = {0.65f, 0.72f, 0.85f, 0.55f};
+    for (int i = 0; i < RAIN_PARTICLE_COUNT; ++i) {
+        Vertex v1, v2;
+        v1.normal = {0,1,0}; v1.uv = {0,0};
+        v2.normal = {0,1,0}; v2.uv = {0,0};
+        for (int c = 0; c < 4; ++c) { v1.color[c] = rainColor[c]; v2.color[c] = rainColor[c]; }
+        v1.pos = {0,0,0};
+        v2.pos = {0,-0.8f,0};
+        rainMesh.vertices.push_back(v1);
+        rainMesh.vertices.push_back(v2);
+        rainMesh.indices.push_back((unsigned int)(i*2));
+        rainMesh.indices.push_back((unsigned int)(i*2+1));
+    }
+    rainMesh.upload();
+
+    // Snow: small quads
+    snowMesh.vertices.clear();
+    snowMesh.indices.clear();
+    float snowColor[4] = {0.95f, 0.95f, 1.0f, 0.8f};
+    for (int i = 0; i < SNOW_PARTICLE_COUNT; ++i) {
+        unsigned int base = (unsigned int)snowMesh.vertices.size();
+        Vertex v;
+        v.normal = {0,1,0}; v.uv = {0,0};
+        for (int c = 0; c < 4; ++c) v.color[c] = snowColor[c];
+        float s = 0.08f;
+        v.pos = {-s,-s,0}; snowMesh.vertices.push_back(v);
+        v.pos = { s,-s,0}; snowMesh.vertices.push_back(v);
+        v.pos = { s, s,0}; snowMesh.vertices.push_back(v);
+        v.pos = {-s, s,0}; snowMesh.vertices.push_back(v);
+        snowMesh.indices.push_back(base+0); snowMesh.indices.push_back(base+1); snowMesh.indices.push_back(base+2);
+        snowMesh.indices.push_back(base+0); snowMesh.indices.push_back(base+2); snowMesh.indices.push_back(base+3);
+    }
+    snowMesh.upload();
+}
+
+void Game::updateWeatherMeshes() {
+    if (weather == WEATHER_RAIN) {
+        for (int i = 0; i < RAIN_PARTICLE_COUNT; ++i) {
+            Vec3 world = rainParticles[i] + camera.position;
+            rainMesh.vertices[i*2].pos = world;
+            rainMesh.vertices[i*2+1].pos = world + Vec3(0,-0.8f,0);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, rainMesh.vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, rainMesh.vertices.size() * sizeof(Vertex), rainMesh.vertices.data());
+    }
+    else if (weather == WEATHER_SNOW) {
+        for (int i = 0; i < SNOW_PARTICLE_COUNT; ++i) {
+            Vec3 world = snowParticles[i] + camera.position;
+            float s = 0.08f;
+            snowMesh.vertices[i*4+0].pos = world + Vec3(-s,-s,0);
+            snowMesh.vertices[i*4+1].pos = world + Vec3( s,-s,0);
+            snowMesh.vertices[i*4+2].pos = world + Vec3( s, s,0);
+            snowMesh.vertices[i*4+3].pos = world + Vec3(-s, s,0);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, snowMesh.vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, snowMesh.vertices.size() * sizeof(Vertex), snowMesh.vertices.data());
+    }
+}
+
+void Game::setupWeather() {
+    // Save the day colors as the base palette
+    baseAmbientColor = ambientColor;
+    baseDirLightColor = dirLightColor;
+    baseFogColor = fogColor;
+
+    // Choose weather based on day progression
+    lcg_seed = (uint32_t)(currentDay * 7654321 + 123);
+    float r = randFloat();
+    if (currentDay <= 2) {
+        weather = WEATHER_CLEAR;
+    } else if (currentDay <= 4) {
+        weather = (r < 0.6f) ? WEATHER_FOGGY : WEATHER_CLEAR;
+    } else if (currentDay <= 6) {
+        if (r < 0.5f) weather = WEATHER_RAIN;
+        else if (r < 0.8f) weather = WEATHER_FOGGY;
+        else weather = WEATHER_CLEAR;
+    } else {
+        if (r < 0.35f) weather = WEATHER_SNOW;
+        else if (r < 0.7f) weather = WEATHER_RAIN;
+        else weather = WEATHER_FOGGY;
+    }
+    windStrength = 1.0f + randFloat() * 2.0f;
+
+    // Apply weather modifiers to fog
+    if (weather == WEATHER_FOGGY) {
+        fogDensity *= 1.4f;
+        fogStart *= 0.7f;
+    } else if (weather == WEATHER_RAIN) {
+        fogDensity *= 1.15f;
+        baseFogColor = Vec3::lerp(baseFogColor, Vec3(0.5f,0.55f,0.6f), 0.3f);
+    } else if (weather == WEATHER_SNOW) {
+        fogDensity *= 1.25f;
+        baseFogColor = Vec3::lerp(baseFogColor, Vec3(0.85f,0.88f,0.92f), 0.4f);
+    }
+}
+
+void Game::applyTimeOfDay() {
+    float t = timeOfDay;
+    float dayFactor = 0.0f;
+    if (t < 5.0f) dayFactor = 0.0f;
+    else if (t < 8.0f) dayFactor = (t - 5.0f) / 3.0f;
+    else if (t < 17.0f) dayFactor = 1.0f;
+    else if (t < 21.0f) dayFactor = 1.0f - (t - 17.0f) / 4.0f;
+    else dayFactor = 0.0f;
+
+    ambientColor = Vec3::lerp(baseAmbientColor * 0.25f, baseAmbientColor, dayFactor);
+    dirLightColor = Vec3::lerp(baseDirLightColor * 0.15f, baseDirLightColor, dayFactor);
+    fogColor = Vec3::lerp(baseFogColor * 0.35f, baseFogColor, dayFactor);
+}
+
+void Game::updateWeather(float dt) {
+    if (weather == WEATHER_RAIN) {
+        for (auto& p : rainParticles) {
+            p.y -= (22.0f + windStrength * 2.0f) * dt;
+            p.x += windStrength * 0.3f * dt;
+            if (p.y < -8.0f) {
+                p.y = 30.0f + randFloat() * 10.0f;
+                p.x = randFloat() * 80.0f - 40.0f;
+                p.z = randFloat() * 80.0f - 40.0f;
+            }
+        }
+        updateWeatherMeshes();
+    }
+    else if (weather == WEATHER_SNOW) {
+        for (auto& p : snowParticles) {
+            p.y -= (2.0f + windStrength * 0.5f) * dt;
+            p.x += (windStrength + sinf(p.y * 0.5f + stateTimer) * 1.5f) * dt;
+            p.z += cosf(p.y * 0.3f + stateTimer * 0.7f) * dt * 0.5f;
+            if (p.y < -8.0f) {
+                p.y = 30.0f + randFloat() * 10.0f;
+                p.x = randFloat() * 80.0f - 40.0f;
+                p.z = randFloat() * 80.0f - 40.0f;
+            }
+        }
+        updateWeatherMeshes();
+    }
+}
+
+void Game::renderWeather() {
+    if (weather == WEATHER_RAIN) {
+        mainShader.use();
+        mainShader.setMat4("model", Mat4::identity());
+        mainShader.setMat4("view", camera.getViewMatrix());
+        float r = float(screenWidth) / screenHeight;
+        mainShader.setMat4("projection", Mat4::perspective(45*M_PI/180, r, 0.1f, 1100));
+        mainShader.setInt("useTexture", 0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        rainMesh.draw();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+    else if (weather == WEATHER_SNOW) {
+        mainShader.use();
+        mainShader.setMat4("model", Mat4::identity());
+        mainShader.setMat4("view", camera.getViewMatrix());
+        float r = float(screenWidth) / screenHeight;
+        mainShader.setMat4("projection", Mat4::perspective(45*M_PI/180, r, 0.1f, 1100));
+        mainShader.setInt("useTexture", 0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        snowMesh.draw();
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+}
+
+// ==================== MENU & SETTINGS ====================
+
+void Game::updateMenu(float dt) {
+    if (languageCyclePressed) {
+        loc.cycleLanguage();
+        languageCyclePressed = false;
+    }
+
+    // Navigation: W/S or Up/Down
+    static float navCooldown = 0.0f;
+    navCooldown -= dt;
+    bool up = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP];
+    bool down = keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN];
+
+    if (navCooldown <= 0.0f && (up || down)) {
+        if (up) menuSelection = (menuSelection - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
+        if (down) menuSelection = (menuSelection + 1) % MENU_ITEM_COUNT;
+        // Wrap selection to skip Continue if there is no save
+        if (menuSelection == 0 && !SaveSystem::hasSaveGame()) {
+            if (down) menuSelection = 1;
+            else menuSelection = MENU_ITEM_COUNT - 1;
+        }
+        navCooldown = 0.2f;
+    }
+
+    // Action
+    if (actionPressed || newGameRequested) {
+        actionPressed = false;
+        newGameRequested = false;
+        switch (menuSelection) {
+            case 0: // Continue
+                if (SaveSystem::hasSaveGame()) {
+                    loadProgress();
+                }
+                setupDaySettings();
+                resetPlayer();
+                syncCollectiblesWithSave();
+                state = STATE_INTRO;
+                fadeAlpha = 1.0f;
+                audio.playSound("intro");
+                break;
+            case 1: // New Game
+                currentDay = 1;
+                setupDaySettings();
+                resetPlayer();
+                syncCollectiblesWithSave();
+                saveProgress();
+                state = STATE_INTRO;
+                fadeAlpha = 1.0f;
+                audio.playSound("intro");
+                break;
+            case 2: // Settings
+                state = STATE_MENU_SETTINGS;
+                settingsSelection = 0;
+                break;
+            case 3: // Exit
+                // We cannot directly exit from Game; main.cpp handles SDL_QUIT
+                // Send a synthetic quit event
+                SDL_Event quitEvent;
+                quitEvent.type = SDL_QUIT;
+                SDL_PushEvent(&quitEvent);
+                break;
+        }
+    }
+}
+
+void Game::updateSettings(float dt) {
+    static float navCooldown = 0.0f;
+    static float adjustCooldown = 0.0f;
+    navCooldown -= dt;
+    adjustCooldown -= dt;
+
+    bool up = keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP];
+    bool down = keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN];
+    bool left = keys[SDL_SCANCODE_A] || keys[SDL_SCANCODE_LEFT];
+    bool right = keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT];
+
+    if (navCooldown <= 0.0f && (up || down)) {
+        if (up) settingsSelection = (settingsSelection - 1 + SETTINGS_ITEM_COUNT) % SETTINGS_ITEM_COUNT;
+        if (down) settingsSelection = (settingsSelection + 1) % SETTINGS_ITEM_COUNT;
+        navCooldown = 0.2f;
+    }
+
+    if (adjustCooldown <= 0.0f && (left || right)) {
+        int dir = right ? 1 : -1;
+        switch (settingsSelection) {
+            case 0: // Language
+                settings.languageIndex = (settings.languageIndex + dir + 3) % 3;
+                applySettings();
+                saveSettings();
+                break;
+            case 1: // Mouse sensitivity
+                settings.mouseSensitivity += dir * 0.001f;
+                applySettings();
+                saveSettings();
+                break;
+            case 2: // View distance
+                settings.viewDistance += dir * 0.1f;
+                applySettings();
+                saveSettings();
+                break;
+        }
+        adjustCooldown = 0.15f;
+    }
+
+    if (actionPressed) {
+        actionPressed = false;
+        if (settingsSelection == 3) {
+            // Back
+            state = STATE_MENU;
+            menuSelection = 2;
+        }
+    }
+}
+
+void Game::renderMenu() {
+    float bg[4] = {0.05f,0.06f,0.08f,1};
+    ui.drawRect(0,0,screenWidth,screenHeight,bg);
+    float t[4]={0.94f,0.96f,0.9f,1}, s[4]={0.77f,0.8f,0.74f,1};
+    ui.drawText(loc.tr("menu.title","AnxietyHorror"), screenWidth*0.1f, screenHeight*0.16f, 4.4f, t);
+    ui.drawText(loc.tr("menu.subtitle","Nine days in an open valley"), screenWidth*0.105f, screenHeight*0.3f, 1.8f, s);
+
+    const char* items[MENU_ITEM_COUNT] = {
+        "menu.continue",
+        "menu.newgame",
+        "menu.settings",
+        "menu.exit"
+    };
+    const char* fallbacks[MENU_ITEM_COUNT] = {
+        "Continue",
+        "New Game",
+        "Settings",
+        "Exit"
+    };
+
+    float startY = screenHeight * 0.5f;
+    for (int i = 0; i < MENU_ITEM_COUNT; ++i) {
+        if (i == 0 && !SaveSystem::hasSaveGame()) continue;
+        bool selected = (i == menuSelection);
+        float y = startY + i * 50.0f;
+        float col[4] = {0.7f,0.74f,0.68f, selected ? 1.0f : 0.7f};
+        if (selected) {
+            float selBg[4] = {0.2f,0.25f,0.3f,0.6f};
+            ui.drawRect(screenWidth*0.08f - 10, y - 5, 320, 40, selBg);
+        }
+        ui.drawText((selected ? "> " : "  ") + loc.tr(items[i], fallbacks[i]), screenWidth*0.08f, y, 1.8f, col);
+    }
+
+    // Controls hint
+    float hint[4] = {0.5f,0.55f,0.5f,0.7f};
+    ui.drawText(loc.tr("menu.controls","WASD / Up-Down to navigate | Enter to select"), screenWidth*0.08f, screenHeight*0.9f, 1.2f, hint);
+}
+
+void Game::renderSettings() {
+    float bg[4] = {0.05f,0.06f,0.08f,1};
+    ui.drawRect(0,0,screenWidth,screenHeight,bg);
+    float t[4]={0.94f,0.96f,0.9f,1};
+    ui.drawText(loc.tr("settings.title","Settings"), screenWidth*0.1f, screenHeight*0.12f, 3.8f, t);
+
+    const char* labels[SETTINGS_ITEM_COUNT] = {
+        "settings.language",
+        "settings.sensitivity",
+        "settings.viewdistance",
+        "settings.back"
+    };
+    const char* fallbacks[SETTINGS_ITEM_COUNT] = {
+        "Language",
+        "Mouse Sensitivity",
+        "View Distance",
+        "Back"
+    };
+
+    static const char* langNames[3] = {"English", "Русский", "Espanol"};
+    std::stringstream ss[SETTINGS_ITEM_COUNT];
+    ss[0] << loc.tr(labels[0], fallbacks[0]) << ": " << langNames[settings.languageIndex];
+    ss[1] << loc.tr(labels[1], fallbacks[1]) << ": " << std::fixed << std::setprecision(3) << settings.mouseSensitivity;
+    ss[2] << loc.tr(labels[2], fallbacks[2]) << ": " << std::fixed << std::setprecision(1) << settings.viewDistance << "x";
+    ss[3] << loc.tr(labels[3], fallbacks[3]);
+
+    float startY = screenHeight * 0.35f;
+    for (int i = 0; i < SETTINGS_ITEM_COUNT; ++i) {
+        bool selected = (i == settingsSelection);
+        float y = startY + i * 55.0f;
+        float col[4] = {0.7f,0.74f,0.68f, selected ? 1.0f : 0.7f};
+        if (selected) {
+            float selBg[4] = {0.2f,0.25f,0.3f,0.6f};
+            ui.drawRect(screenWidth*0.08f - 10, y - 5, 520, 40, selBg);
+            ui.drawText("< " + ss[i].str() + " >", screenWidth*0.08f, y, 1.7f, col);
+        } else {
+            ui.drawText("  " + ss[i].str(), screenWidth*0.08f, y, 1.7f, col);
+        }
+    }
+
+    float hint[4] = {0.5f,0.55f,0.5f,0.7f};
+    ui.drawText(loc.tr("settings.controls","WASD / Arrows navigate | Left-Right adjust | Enter back"), screenWidth*0.08f, screenHeight*0.9f, 1.2f, hint);
 }

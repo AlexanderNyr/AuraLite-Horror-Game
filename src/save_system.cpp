@@ -3,8 +3,21 @@
 #include <sstream>
 #include <iostream>
 
+#ifdef __ANDROID__
+#include <SDL2/SDL.h>
+#endif
+
+static std::string resolveSavePath(const std::string& filePath) {
+#ifdef __ANDROID__
+    if (const char* internalPath = SDL_AndroidGetInternalStoragePath()) {
+        return std::string(internalPath) + "/" + filePath;
+    }
+#endif
+    return filePath;
+}
+
 bool SaveSystem::saveGame(const SaveData& data, const std::string& filePath) {
-    std::ofstream out(filePath);
+    std::ofstream out(resolveSavePath(filePath));
     if (!out.is_open()) {
         std::cerr << "Warning: Failed to open save file for writing: " << filePath << std::endl;
         return false;
@@ -23,7 +36,7 @@ bool SaveSystem::saveGame(const SaveData& data, const std::string& filePath) {
 }
 
 bool SaveSystem::loadGame(SaveData& data, const std::string& filePath) {
-    std::ifstream file(filePath);
+    std::ifstream file(resolveSavePath(filePath));
     if (!file.is_open()) return false;
 
     std::string line;
@@ -52,6 +65,6 @@ bool SaveSystem::loadGame(SaveData& data, const std::string& filePath) {
 }
 
 bool SaveSystem::hasSaveGame(const std::string& filePath) {
-    std::ifstream file(filePath);
+    std::ifstream file(resolveSavePath(filePath));
     return file.is_open();
 }

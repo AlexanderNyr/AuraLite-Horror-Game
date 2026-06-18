@@ -5,7 +5,7 @@
     <application
         android:allowBackup="true"
         android:icon="@android:mipmap/sym_def_app_icon"
-        android:label="Anxiety Fog"
+        android:label="AnxietyHorror"
         android:theme="@style/Theme.AppCompat.NoActionBar">
         
         <activity
