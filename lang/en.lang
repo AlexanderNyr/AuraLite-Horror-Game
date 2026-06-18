@@ -67,4 +67,4 @@ d8.final = Make sure you have everything you need.\nPrepare to finish your stay.
 
 d9.obj = Return to the cabin. Your time here is ending.
 d9.diary = DAY 9\n\nAfter nine days the valley feels\nboth familiar and strangely quiet.\nIt is time to decide what comes next.
-d9.end = Return to the cabin. Your time here is ending.
+d9.end = Return to the cabin. Your time here is ending. Need to escape valley.
