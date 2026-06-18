@@ -15,6 +15,8 @@ set(GAME_SOURCES
     src/camera.cpp
     src/ui.cpp
     src/localization.cpp
+    src/audio.cpp
+    src/save_system.cpp
 )
 
 function(configure_common_target target_name)
@@ -32,7 +34,7 @@ function(configure_common_target target_name)
 endfunction()
 
 if(ANDROID)
-    message(STATUS "Building AuraLite Horror for Android / OpenGL ES 3.0")
+    message(STATUS "Building AuraLite Horror for Android / OpenGL ES 3.2")
 
     add_library(main SHARED ${GAME_SOURCES})
     configure_common_target(main)
@@ -44,7 +46,7 @@ if(ANDROID)
         SDL2
     )
 else()
-    message(STATUS "Building AuraLite Horror for desktop / OpenGL 3.3")
+    message(STATUS "Building AuraLite Horror for desktop / OpenGL 4.6")
 
     add_executable(AnxietyHorror
         ${GAME_SOURCES}
@@ -78,7 +80,7 @@ else()
             set(SDL_TEST OFF CACHE BOOL "Build SDL test programs" FORCE)
             set(SDL_EVENTS ON CACHE BOOL "Enable events" FORCE)
             set(SDL_VIDEO ON CACHE BOOL "Enable video" FORCE)
-            set(SDL_AUDIO OFF CACHE BOOL "Disable audio for this prototype" FORCE)
+            set(SDL_AUDIO ON CACHE BOOL "Enable audio for procedural horror synth" FORCE)
             set(SDL_RENDER OFF CACHE BOOL "Disable SDL 2D renderer API" FORCE)
 
             FetchContent_MakeAvailable(SDL2)

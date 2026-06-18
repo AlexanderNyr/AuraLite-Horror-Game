@@ -6,6 +6,8 @@
 #include "camera.hpp"
 #include "ui.hpp"
 #include "localization.hpp"
+#include "audio.hpp"
+#include "save_system.hpp"
 
 enum GameState {
     STATE_MENU,
@@ -120,6 +122,13 @@ public:
     int lookTouchId = -1;
     float lastTouchCamX = 0.0f;
     float lastTouchCamY = 0.0f;
+
+    bool newGameRequested = false;
+    Frustum frustum;
+
+    void syncCollectiblesWithSave();
+    void saveProgress();
+    void loadProgress();
 
     void init(int width, int height, bool mobileMode);
     void resize(int width, int height);

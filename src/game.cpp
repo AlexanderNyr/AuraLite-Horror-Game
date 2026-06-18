@@ -27,6 +27,46 @@ static float randFloat() {
     return (float)lcg_seed / (float)0x7fffffff;
 }
 
+void Game::syncCollectiblesWithSave() {
+    for (size_t i = 0; i < woodLogs.size(); ++i) {
+        woodLogs[i].collected = ((int)i < logsCollected);
+    }
+    for (size_t i = 0; i < flowers.size(); ++i) {
+        flowers[i].collected = ((int)i < flowersCollected);
+    }
+    for (size_t i = 0; i < stones.size(); ++i) {
+        stones[i].collected = ((int)i < stonesCollected);
+    }
+    oldTool.collected = toolFound;
+    rareHerb.collected = herbFound;
+}
+
+void Game::saveProgress() {
+    SaveData data;
+    data.currentDay = currentDay;
+    data.wellRepaired = wellRepaired;
+    data.logsCollected = logsCollected;
+    data.flowersCollected = flowersCollected;
+    data.stonesCollected = stonesCollected;
+    data.toolFound = toolFound;
+    data.herbFound = herbFound;
+    SaveSystem::saveGame(data);
+}
+
+void Game::loadProgress() {
+    SaveData data;
+    if (SaveSystem::loadGame(data)) {
+        currentDay = data.currentDay;
+        wellRepaired = data.wellRepaired;
+        logsCollected = data.logsCollected;
+        flowersCollected = data.flowersCollected;
+        stonesCollected = data.stonesCollected;
+        toolFound = data.toolFound;
+        herbFound = data.herbFound;
+        syncCollectiblesWithSave();
+    }
+}
+
 void Game::init(int width, int height, bool mobileMode) {
     screenWidth = width;
     screenHeight = height;
@@ -190,6 +230,10 @@ void Game::init(int width, int height, bool mobileMode) {
     updateTouchLayout();
     spawnCollectibles();
     setupDaySettings();
+
+    // Try loading existing progress if available
+    loadProgress();
+
     state = STATE_MENU;
     resetPlayer();
 }
@@ -343,6 +387,8 @@ void Game::handleEvent(void* e) {
             flashlightTogglePressed = true;
         if (ev->key.keysym.sym == SDLK_F2 && ev->key.repeat == 0)
             languageCyclePressed = true;
+        if (ev->key.keysym.sym == SDLK_n && ev->key.repeat == 0)
+            newGameRequested = true;
     } else if (ev->type == SDL_KEYUP) {
         if (ev->key.keysym.scancode < 512) keys[ev->key.keysym.scancode] = false;
     } else if (ev->type == SDL_MOUSEMOTION && state == STATE_GAMEPLAY && !isAndroid) {
@@ -376,6 +422,9 @@ void Game::triggerNextDay() {
     if (currentDay > 9) currentDay = 1;
     setupDaySettings();
     resetPlayer();
+    syncCollectiblesWithSave();
+    saveProgress();
+    audio.playSound("intro");
 }
 
 void Game::update(float dt) {
@@ -389,7 +438,25 @@ void Game::update(float dt) {
     if (languageCyclePressed) { loc.cycleLanguage(); languageCyclePressed = false; }
 
     if (state == STATE_MENU) {
-        if (actionPressed) { actionPressed = false; state = STATE_INTRO; fadeAlpha = 1.0f; }
+        if (newGameRequested) {
+            newGameRequested = false;
+            currentDay = 1;
+            setupDaySettings();
+            resetPlayer();
+            syncCollectiblesWithSave();
+            saveProgress();
+            state = STATE_INTRO;
+            fadeAlpha = 1.0f;
+            audio.playSound("intro");
+        } else if (actionPressed) {
+            actionPressed = false;
+            setupDaySettings();
+            resetPlayer();
+            syncCollectiblesWithSave();
+            state = STATE_INTRO;
+            fadeAlpha = 1.0f;
+            audio.playSound("intro");
+        }
         return;
     }
     if (state == STATE_INTRO) {
@@ -460,58 +527,60 @@ void Game::update(float dt) {
     // === 9 Days Objectives ===
     if (currentDay == 1) {
         objectiveText = loc.tr("d1.explore", "Explore the valley and the old village.");
-        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 2) {
         float dw = sqrt((camera.position.x+20)*(camera.position.x+20)+(camera.position.z+50)*(camera.position.z+50));
         if (!wellRepaired) {
             objectiveText = loc.tr("d2.check", "Inspect the well near the village.");
-            if (dw < 5.5f && interact) wellRepaired = true;
-        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+            if (dw < 5.5f && interact) { wellRepaired = true; audio.playSound("repair"); saveProgress(); }
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 3) {
         for (auto& l : woodLogs) if (!l.collected && (camera.position - l.pos).length() < 3.3f && interact) {
-            l.collected = true; logsCollected++;
+            l.collected = true; logsCollected++; audio.playSound("pickup"); saveProgress();
         }
         if (logsCollected < 3) objectiveText = "Collect firewood (" + std::to_string(logsCollected) + "/3)";
-        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 4) {
         for (auto& f : flowers) if (!f.collected && (camera.position - f.pos).length() < 2.9f && interact) {
-            f.collected = true; flowersCollected++;
+            f.collected = true; flowersCollected++; audio.playSound("pickup"); saveProgress();
         }
         if (flowersCollected < 8) objectiveText = "Gather flowers (" + std::to_string(flowersCollected) + "/8)";
-        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 5) {
         float dt = (camera.position - oldTool.pos).length();
         if (!toolFound) {
             objectiveText = loc.tr("d5.search", "Search west of the village for tools.");
-            if (dt < 4.5f && interact) toolFound = true;
-        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+            if (dt < 4.5f && interact) { toolFound = true; audio.playSound("pickup"); saveProgress(); }
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 6) {
         for (auto& s : stones) if (!s.collected && (camera.position - s.pos).length() < 3.1f && interact) {
-            s.collected = true; stonesCollected++;
+            s.collected = true; stonesCollected++; audio.playSound("pickup"); saveProgress();
         }
         if (stonesCollected < 6) objectiveText = "Collect stones (" + std::to_string(stonesCollected) + "/6)";
-        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+        else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 7) {
         float dh = (camera.position - rareHerb.pos).length();
         if (!herbFound) {
             objectiveText = loc.tr("d7.herb", "Find rare herbs in the deeper forest.");
-            if (dh < 4.2f && interact) herbFound = true;
-        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+            if (dh < 4.2f && interact) { herbFound = true; audio.playSound("pickup"); saveProgress(); }
+        } else if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 8) {
         objectiveText = loc.tr("d8.final", "Finish gathering resources.");
-        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; }
+        if (dCabin < 4.2f && interact) { state = STATE_SLEEP_FADE; stateTimer = 0; audio.playSound("sleep"); }
     }
     else if (currentDay == 9) {
         objectiveText = loc.tr("d9.end", "Return to the cabin to end your journey.");
-        if (dCabin < 4.2f && interact) { state = STATE_ENDING; stateTimer = 0; }
+        if (dCabin < 4.2f && interact) { state = STATE_ENDING; stateTimer = 0; audio.playSound("sleep"); }
     }
+
+    audio.update(fogDensity, currentDay, kMove || mMove, isSprinting, stamina, fatigue);
 }
 
 void Game::drawBillboard(const Shader& sh, const Vec3& pos, float sx, float sy, int type, float op) {
@@ -541,7 +610,13 @@ void Game::render() {
         float t[4]={0.94f,0.96f,0.9f,1}, s[4]={0.77f,0.8f,0.74f,1};
         ui.drawText(loc.tr("menu.title","AURA VALLEY"), screenWidth*0.1f, screenHeight*0.16f, 4.4f, t);
         ui.drawText(loc.tr("menu.subtitle","Nine days in an open valley"), screenWidth*0.105f, screenHeight*0.3f, 1.8f, s);
-        ui.drawText(loc.tr("menu.start","Press ENTER to begin"), screenWidth*0.1f, screenHeight*0.56f, 1.6f, s);
+        
+        if (SaveSystem::hasSaveGame()) {
+            std::stringstream ss; ss << "Press ENTER to continue (Day " << currentDay << ") | Press N for New Game";
+            ui.drawText(ss.str(), screenWidth*0.1f, screenHeight*0.56f, 1.5f, s);
+        } else {
+            ui.drawText(loc.tr("menu.start","Press ENTER to begin"), screenWidth*0.1f, screenHeight*0.56f, 1.6f, s);
+        }
         return;
     }
 
@@ -567,9 +642,16 @@ void Game::render() {
 
     // === 3D RENDER ===
     mainShader.use();
-    mainShader.setMat4("view", camera.getViewMatrix());
+    Mat4 viewMat = camera.getViewMatrix();
+    mainShader.setMat4("view", viewMat);
     float ratio = float(screenWidth)/screenHeight;
-    mainShader.setMat4("projection", Mat4::perspective(45*M_PI/180, ratio, 0.1f, 1100));
+    Mat4 projMat = Mat4::perspective(45*M_PI/180, ratio, 0.1f, 1100);
+    mainShader.setMat4("projection", projMat);
+    
+    // Extract Frustum for culling
+    Mat4 vpMat = projMat * viewMat;
+    frustum.extract(vpMat);
+
     mainShader.setVec3("viewPos", camera.position);
     mainShader.setVec3("fogColor", fogColor);
     mainShader.setFloat("fogStart", fogStart);
@@ -599,6 +681,7 @@ void Game::render() {
     // Village Houses
     for (const auto& obj : villageObjects) {
         if (obj.type == 0) {
+            if (!frustum.isSphereInside(obj.pos, 12.0f)) continue;
             Mat4 hm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale, obj.scale, obj.scale});
             mainShader.setMat4("model", hm);
             mainShader.setInt("useTexture", 0);
@@ -607,19 +690,26 @@ void Game::render() {
     }
 
     // Well
-    Mat4 wm = Mat4::translation({-20, getTerrainHeight(-20,-50), -50});
-    mainShader.setMat4("model", wm);
-    mainShader.setInt("useTexture", 0);
-    wellMesh.draw();
+    Vec3 wellPos = {-20, getTerrainHeight(-20,-50), -50};
+    if (frustum.isSphereInside(wellPos, 6.0f)) {
+        Mat4 wm = Mat4::translation(wellPos);
+        mainShader.setMat4("model", wm);
+        mainShader.setInt("useTexture", 0);
+        wellMesh.draw();
+    }
 
     // Car
-    Mat4 cm = Mat4::translation({12, getTerrainHeight(12,78), 78}) * Mat4::rotationY(M_PI/4);
-    mainShader.setMat4("model", cm);
-    carMesh.draw();
+    Vec3 carPos = {12, getTerrainHeight(12,78), 78};
+    if (frustum.isSphereInside(carPos, 8.0f)) {
+        Mat4 cm = Mat4::translation(carPos) * Mat4::rotationY(M_PI/4);
+        mainShader.setMat4("model", cm);
+        carMesh.draw();
+    }
 
     // Trees
     mainShader.setInt("useTexture", 0);
     for (size_t i = 0; i < treePositions.size(); ++i) {
+        if (!frustum.isSphereInside(treePositions[i], 9.0f)) continue;
         Mat4 tm = Mat4::translation(treePositions[i]) * Mat4::scaling({treeScales[i]});
         mainShader.setMat4("model", tm);
         treeMesh.draw();
@@ -628,10 +718,12 @@ void Game::render() {
     // Village Rocks & Fences
     for (const auto& obj : villageObjects) {
         if (obj.type == 1) {
+            if (!frustum.isSphereInside(obj.pos, 5.0f)) continue;
             Mat4 rm = Mat4::translation(obj.pos) * Mat4::scaling({obj.scale});
             mainShader.setMat4("model", rm);
             rockMesh.draw();
         } else if (obj.type == 2) {
+            if (!frustum.isSphereInside(obj.pos, 10.0f)) continue;
             Mat4 fm = Mat4::translation(obj.pos);
             mainShader.setMat4("model", fm);
             fenceMesh.draw();
@@ -671,6 +763,7 @@ void Game::render() {
     glDepthMask(GL_FALSE);
 
     if (currentDay >= 4) for (const auto& f : flowers) if (!f.collected) {
+        if (!frustum.isSphereInside(f.pos, 1.5f)) continue;
         float d = (camera.position - f.pos).length();
         if (d < 55) drawBillboard(billboardShader, f.pos, 1.0f, 1.2f, 0);
     }

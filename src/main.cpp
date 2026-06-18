@@ -3,10 +3,11 @@
 #endif
 #include <SDL2/SDL.h>
 #include "game.hpp"
+#include "audio.hpp"
 #include <iostream>
 
 #ifdef __ANDROID__
-    #include <GLES3/gl3.h>
+    #include <GLES3/gl32.h>
 #else
     #include <glad/glad.h>
 #endif
@@ -30,12 +31,12 @@ int main(int argc, char* argv[]) {
 #ifdef __ANDROID__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 #else
-    // Windows/Desktop - use standard core OpenGL 3.3 which matches GLES 3.0 features
+    // Windows/Desktop - use standard core OpenGL 4.6
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -97,8 +98,9 @@ int main(int argc, char* argv[]) {
     // Setup viewport
     glViewport(0, 0, width, height);
 
-    // Initialize Game engine
+    // Initialize Game engine and Audio
     game.init(width, height, isMobile);
+    audio.init();
 
     bool running = true;
     SDL_Event event;
@@ -162,6 +164,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Free resources and exit
+    audio.cleanup();
     game.cleanup();
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(window);

@@ -158,3 +158,54 @@ struct Mat4 {
         return r;
     }
 };
+
+struct Plane {
+    Vec3 n;
+    float d = 0.0f;
+
+    void normalize() {
+        float len = n.length();
+        if (len > 0.0001f) {
+            n = n / len;
+            d = d / len;
+        }
+    }
+
+    float distance(const Vec3& p) const {
+        return Vec3::dot(n, p) + d;
+    }
+};
+
+struct Frustum {
+    Plane planes[6];
+
+    void extract(const Mat4& vp) {
+        const float* m = vp.m;
+        // Left
+        planes[0] = { {m[3] + m[0], m[7] + m[4], m[11] + m[8]}, m[15] + m[12] };
+        // Right
+        planes[1] = { {m[3] - m[0], m[7] - m[4], m[11] - m[8]}, m[15] - m[12] };
+        // Bottom
+        planes[2] = { {m[3] + m[1], m[7] + m[5], m[11] + m[9]}, m[15] + m[13] };
+        // Top
+        planes[3] = { {m[3] - m[1], m[7] - m[5], m[11] - m[9]}, m[15] - m[13] };
+        // Near
+        planes[4] = { {m[3] + m[2], m[7] + m[6], m[11] + m[10]}, m[15] + m[14] };
+        // Far
+        planes[5] = { {m[3] - m[2], m[7] - m[6], m[11] - m[10]}, m[15] - m[14] };
+
+        for (int i = 0; i < 6; ++i) {
+            planes[i].normalize();
+        }
+    }
+
+    bool isSphereInside(const Vec3& center, float radius) const {
+        for (int i = 0; i < 6; ++i) {
+            if (planes[i].distance(center) < -radius) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+

@@ -16,9 +16,9 @@
 bool Shader::compile(const std::string& vertexSource, const std::string& fragmentSource) {
     std::string versionHeader;
 #ifdef __ANDROID__
-    versionHeader = "#version 300 es\nprecision mediump float;\n";
+    versionHeader = "#version 320 es\nprecision mediump float;\n";
 #else
-    versionHeader = "#version 330 core\n";
+    versionHeader = "#version 460 core\n";
 #endif
 
     std::string fullVert = versionHeader + vertexSource;
