@@ -93,9 +93,9 @@ void Game::loadProgress() {
         if (data.currentDay < 1 || data.currentDay > 9) data.currentDay = 1;
         currentDay = data.currentDay;
         wellRepaired = data.wellRepaired;
-        logsCollected = data.logsCollected;
-        flowersCollected = data.flowersCollected;
-        stonesCollected = data.stonesCollected;
+        logsCollected = clamp(data.logsCollected, 0, 3);
+        flowersCollected = clamp(data.flowersCollected, 0, 12);
+        stonesCollected = clamp(data.stonesCollected, 0, 8);
         toolFound = data.toolFound;
         herbFound = data.herbFound;
         syncCollectiblesWithSave();
@@ -858,7 +858,7 @@ void Game::updateEnemies(float dt) {
     fear = clamp(fear, 0.0f, 1.0f);
 
     if (fear >= 1.0f) {
-        state = STATE_ENDING; // reuse ending state with game over text
+        state = STATE_GAME_OVER;
         stateTimer = 0.0f;
     }
 }
@@ -945,7 +945,9 @@ void Game::spawnCollectibles() {
 
 void Game::setupDaySettings() {
     state = STATE_INTRO; stateTimer = 0; fadeAlpha = 1.0f;
-    flashlightOn = false; flashlightIntensity = 0;
+    flashlightOn = false;
+    flashlightIntensity = 0.0f;
+    flashlightBattery = currentDay >= 5 ? 1.0f : 0.0f;
 
     float dayProgress = (currentDay - 1) / 8.0f;
 
@@ -1071,11 +1073,26 @@ void Game::update(float dt) {
     if (dt > 0.12f) dt = 0.12f;
     stateTimer += dt;
 
-    if (languageSelectRequested == 0) loc.loadLanguage("en");
-    if (languageSelectRequested == 1) loc.loadLanguage("ru");
-    if (languageSelectRequested == 2) loc.loadLanguage("es");
+    auto persistLanguageFromCurrentCode = [&]() {
+        const std::string code = loc.currentCode();
+        int idx = 0;
+        if (code == "ru") idx = 1;
+        else if (code == "es") idx = 2;
+        if (settings.languageIndex != idx) {
+            settings.languageIndex = idx;
+            saveSettings();
+        }
+    };
+
+    if (languageSelectRequested == 0 && loc.loadLanguage("en")) { settings.languageIndex = 0; saveSettings(); }
+    if (languageSelectRequested == 1 && loc.loadLanguage("ru")) { settings.languageIndex = 1; saveSettings(); }
+    if (languageSelectRequested == 2 && loc.loadLanguage("es")) { settings.languageIndex = 2; saveSettings(); }
     languageSelectRequested = -1;
-    if (languageCyclePressed) { loc.cycleLanguage(); languageCyclePressed = false; }
+    if (languageCyclePressed) {
+        loc.cycleLanguage();
+        persistLanguageFromCurrentCode();
+        languageCyclePressed = false;
+    }
 
     if (state == STATE_MENU) {
         updateMenu(dt);
@@ -1098,6 +1115,20 @@ void Game::update(float dt) {
         }
         return;
     }
+    if (state == STATE_GAME_OVER) {
+        if (actionPressed) {
+            actionPressed = false;
+            currentDay = 1;
+            resetProgressData(*this);
+            setupDaySettings();
+            resetPlayer();
+            saveProgress();
+            state = STATE_MENU;
+            menuSelection = 1;
+        }
+        return;
+    }
+
     if (state == STATE_ENDING) {
         if (actionPressed) {
             actionPressed = false;
@@ -1105,6 +1136,7 @@ void Game::update(float dt) {
             resetProgressData(*this);
             setupDaySettings();
             resetPlayer();
+            saveProgress();
             state = STATE_INTRO;
         }
         return;
@@ -1153,10 +1185,26 @@ void Game::update(float dt) {
     camera.position.y = getTerrainHeight(camera.position.x, camera.position.z) + 1.8f;
 
     if (flashlightTogglePressed) {
-        flashlightOn = !flashlightOn;
+        if (currentDay >= 5 && flashlightBattery > 0.02f) {
+            flashlightOn = !flashlightOn;
+        } else {
+            flashlightOn = false;
+        }
         flashlightTogglePressed = false;
     }
-    flashlightIntensity = flashlightOn ? 1.45f : 0;
+
+    if (currentDay < 5 || flashlightBattery <= 0.0f) {
+        flashlightOn = false;
+    }
+    if (flashlightOn) {
+        flashlightBattery = clamp(flashlightBattery - dt * 0.025f, 0.0f, 1.0f);
+        if (flashlightBattery <= 0.0f) flashlightOn = false;
+    }
+    float flicker = 1.0f;
+    if (flashlightOn && flashlightBattery < 0.22f) {
+        flicker = 0.65f + 0.35f * (0.5f + 0.5f * sinf(stateTimer * 37.0f));
+    }
+    flashlightIntensity = flashlightOn ? (1.05f + flashlightBattery * 0.55f) * flicker : 0.0f;
 
     // Time of day and weather progression
     timeOfDay += dt * timeScale;
@@ -1466,18 +1514,19 @@ void Game::render() {
         return;
     }
 
+    if (state == STATE_GAME_OVER) {
+        renderGameOver();
+        return;
+    }
+
     if (state == STATE_ENDING) {
-        if (fear >= 0.99f) {
-            renderGameOver();
-        } else {
-            float dk[4]={0.02f,0.025f,0.03f,1};
-            ui.drawRect(0,0,screenWidth,screenHeight,dk);
-            float gd[4]={0.95f,0.92f,0.8f,1};
-            ui.drawText(loc.tr("end.title","The Valley Remembers"), screenWidth*0.5f-160, screenHeight*0.28f, 3.2f, gd);
-            float endTextColor[4] = {0.87f, 0.89f, 0.83f, 1.0f};
-            ui.drawText(loc.tr("end.text","After nine days the valley feels\nboth familiar and strangely quiet.\nYou leave changed, but at peace."),
-                        screenWidth*0.16f, screenHeight*0.45f, 1.55f, endTextColor);
-        }
+        float dk[4]={0.02f,0.025f,0.03f,1};
+        ui.drawRect(0,0,screenWidth,screenHeight,dk);
+        float gd[4]={0.95f,0.92f,0.8f,1};
+        ui.drawText(loc.tr("end.title","The Valley Remembers"), screenWidth*0.5f-160, screenHeight*0.28f, 3.2f, gd);
+        float endTextColor[4] = {0.87f, 0.89f, 0.83f, 1.0f};
+        ui.drawText(loc.tr("end.text","After nine days the valley feels\nboth familiar and strangely quiet.\nYou leave changed, but at peace."),
+                    screenWidth*0.16f, screenHeight*0.45f, 1.55f, endTextColor);
         return;
     }
 
@@ -1614,6 +1663,11 @@ void Game::render() {
             lc[0] = 0.32f; lc[1] = 0.32f; lc[2] = 0.32f; lc[3] = 0.5f;
         }
         ui.drawRect(screenWidth-155, 88, 108, 36, lc);
+        float bb[4] = {0.05f, 0.05f, 0.05f, 0.65f};
+        float bc[4] = {0.95f, 0.86f, 0.42f, 0.90f};
+        if (flashlightBattery < 0.22f) { bc[0] = 0.95f; bc[1] = 0.32f; bc[2] = 0.22f; }
+        ui.drawRect(screenWidth-150, 116, 98, 5, bb);
+        ui.drawRect(screenWidth-150, 116, 98 * flashlightBattery, 5, bc);
     }
 
     ui.drawVirtualJoysticks(leftJoyX, leftJoyY, leftRadius, activeJoyX, activeJoyY,

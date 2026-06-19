@@ -52,11 +52,11 @@ echo.
 :: ============================================================
 if not "%ANDROID_NDK_HOME%"=="" goto ndk_ok
 echo [WARN] ANDROID_NDK_HOME is not set.
-echo Looking for an installed NDK under %%ANDROID_HOME%%\ndkit\ ...
+echo Looking for an installed NDK under %%ANDROID_HOME%%\ndk\ ...
 echo.
 set "ANDROID_NDK_HOME="
-for /f "delims=" %%i in ('dir /b "%ANDROID_HOME%\ndkit" 2^>nul') do (
-    if "!ANDROID_NDK_HOME!"=="" set "ANDROID_NDK_HOME=%ANDROID_HOME%\ndkit\%%i"
+for /f "delims=" %%i in ('dir /b "%ANDROID_HOME%\ndk" 2^>nul') do (
+    if "!ANDROID_NDK_HOME!"=="" set "ANDROID_NDK_HOME=%ANDROID_HOME%\ndk\%%i"
 )
 if not "%ANDROID_NDK_HOME%"=="" goto ndk_ok
 echo [ERROR] No NDK installation found.

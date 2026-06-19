@@ -14,6 +14,9 @@
 #endif
 
 bool Shader::compile(const std::string& vertexSource, const std::string& fragmentSource) {
+    cleanup();
+    uniformCache.clear();
+
     std::string versionHeader;
 #ifdef __ANDROID__
     versionHeader = "#version 320 es\nprecision mediump float;\n";
@@ -88,31 +91,41 @@ void Shader::cleanup() {
         glDeleteProgram(id);
         id = 0;
     }
+    uniformCache.clear();
+}
+
+GLint Shader::getUniformLocationCached(const std::string& name) const {
+    if (id == 0) return -1;
+    auto it = uniformCache.find(name);
+    if (it != uniformCache.end()) return it->second;
+    GLint loc = glGetUniformLocation(id, name.c_str());
+    uniformCache.emplace(name, loc);
+    return loc;
 }
 
 void Shader::setMat4(const std::string& name, const Mat4& mat) const {
-    GLint loc = glGetUniformLocation(id, name.c_str());
+    GLint loc = getUniformLocationCached(name);
     if (loc != -1) {
         glUniformMatrix4fv(loc, 1, GL_FALSE, mat.m);
     }
 }
 
 void Shader::setVec3(const std::string& name, const Vec3& vec) const {
-    GLint loc = glGetUniformLocation(id, name.c_str());
+    GLint loc = getUniformLocationCached(name);
     if (loc != -1) {
         glUniform3f(loc, vec.x, vec.y, vec.z);
     }
 }
 
 void Shader::setFloat(const std::string& name, float val) const {
-    GLint loc = glGetUniformLocation(id, name.c_str());
+    GLint loc = getUniformLocationCached(name);
     if (loc != -1) {
         glUniform1f(loc, val);
     }
 }
 
 void Shader::setInt(const std::string& name, int val) const {
-    GLint loc = glGetUniformLocation(id, name.c_str());
+    GLint loc = getUniformLocationCached(name);
     if (loc != -1) {
         glUniform1i(loc, val);
     }
@@ -322,9 +335,13 @@ bool ShadowMap::init(int resolution) {
                  GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    #ifdef __ANDROID__
+    // GL_CLAMP_TO_BORDER is not guaranteed on all OpenGL ES drivers.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+#else
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-#ifndef __ANDROID__
     GLfloat border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
 #endif

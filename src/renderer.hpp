@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include "math3d.hpp"
 
 #ifdef __ANDROID__
@@ -81,6 +82,11 @@ class Shader {
 public:
     GLuint id = 0;
 
+private:
+    mutable std::unordered_map<std::string, GLint> uniformCache;
+    GLint getUniformLocationCached(const std::string& name) const;
+
+public:
     bool compile(const std::string& vertexSource, const std::string& fragmentSource);
     void use() const;
     void cleanup();

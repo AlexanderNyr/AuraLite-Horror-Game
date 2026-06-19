@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstdio>
 #include <cmath>
 
 #ifdef __ANDROID__
@@ -29,15 +30,30 @@ void GameSettings::sanitize() {
 bool SettingsSystem::saveSettings(const GameSettings& settings, const std::string& filePath) {
     GameSettings s = settings;
     s.sanitize();
-    std::ofstream out(resolveSettingsPath(filePath));
+
+    const std::string resolvedPath = resolveSettingsPath(filePath);
+    const std::string tmpPath = resolvedPath + ".tmp";
+
+    std::ofstream out(tmpPath, std::ios::trunc);
     if (!out.is_open()) {
         std::cerr << "Warning: Failed to open settings file for writing: " << filePath << std::endl;
         return false;
     }
+    out << "version=1\n";
     out << "languageIndex=" << s.languageIndex << "\n";
     out << "mouseSensitivity=" << s.mouseSensitivity << "\n";
     out << "viewDistance=" << s.viewDistance << "\n";
     out.close();
+    if (!out) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
+
+    std::remove(resolvedPath.c_str());
+    if (std::rename(tmpPath.c_str(), resolvedPath.c_str()) != 0) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
     return true;
 }
 

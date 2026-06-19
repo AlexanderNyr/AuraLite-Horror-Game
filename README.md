@@ -180,8 +180,6 @@ The UI ships a built-in ASCII bitmap font plus a minimal 5×7 Cyrillic font rend
 - The CMake status message mentions OpenGL 4.6 while `main.cpp` actually requests 4.5 — cosmetic mismatch.
 - The save system records only counters and flags, not player position / time-of-day / battery — picking up mid-day after a quit isn't supported.
 
-See [`PROJECT_REVIEW_RU.md`](./PROJECT_REVIEW_RU.md) for a deeper architectural review (in Russian).
-
 ---
 
 ## 🤝 Contributing

@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstdio>
 
 #ifdef __ANDROID__
 #include <SDL2/SDL.h>
@@ -17,12 +18,16 @@ static std::string resolveSavePath(const std::string& filePath) {
 }
 
 bool SaveSystem::saveGame(const SaveData& data, const std::string& filePath) {
-    std::ofstream out(resolveSavePath(filePath));
+    const std::string resolvedPath = resolveSavePath(filePath);
+    const std::string tmpPath = resolvedPath + ".tmp";
+
+    std::ofstream out(tmpPath, std::ios::trunc);
     if (!out.is_open()) {
         std::cerr << "Warning: Failed to open save file for writing: " << filePath << std::endl;
         return false;
     }
 
+    out << "version=1\n";
     out << "currentDay=" << data.currentDay << "\n";
     out << "wellRepaired=" << (data.wellRepaired ? 1 : 0) << "\n";
     out << "logsCollected=" << data.logsCollected << "\n";
@@ -32,6 +37,16 @@ bool SaveSystem::saveGame(const SaveData& data, const std::string& filePath) {
     out << "herbFound=" << (data.herbFound ? 1 : 0) << "\n";
 
     out.close();
+    if (!out) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
+
+    std::remove(resolvedPath.c_str());
+    if (std::rename(tmpPath.c_str(), resolvedPath.c_str()) != 0) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
     return true;
 }
 

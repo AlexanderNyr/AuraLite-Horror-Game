@@ -51,6 +51,7 @@ if(ANDROID)
         FetchContent_Declare(
             SDL2
             URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.28.5.zip
+            URL_HASH SHA256=9f7f2f3024df8fb6f54ca5906ef55fe8724443ebc07f4192123c4d2b43e95caf
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         )
         set(SDL_SHARED ON CACHE BOOL "Build shared SDL2 library" FORCE)
@@ -98,6 +99,7 @@ else()
             FetchContent_Declare(
                 SDL2
                 URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.28.5.zip
+                URL_HASH SHA256=9f7f2f3024df8fb6f54ca5906ef55fe8724443ebc07f4192123c4d2b43e95caf
                 DOWNLOAD_EXTRACT_TIMESTAMP TRUE
             )
 

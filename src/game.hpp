@@ -16,6 +16,7 @@ enum GameState {
     STATE_INTRO,
     STATE_GAMEPLAY,
     STATE_SLEEP_FADE,
+    STATE_GAME_OVER,
     STATE_ENDING
 };
 
